@@ -52,14 +52,6 @@ brew install wst
 choco install wst
 ```
 
-### apt (Debian/Ubuntu)
-
-```bash
-sudo add-apt-repository ppa:cnexans/wst
-sudo apt update
-sudo apt install wst
-```
-
 ### From source
 
 ```bash

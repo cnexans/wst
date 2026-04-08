@@ -1,3 +1,0 @@
-#!/bin/sh
-set -e
-pip3 uninstall wst-library -y || true
