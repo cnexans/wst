@@ -1,4 +1,4 @@
-name: Release to PyPI
+name: Release
 
 on:
   push:
@@ -17,7 +17,7 @@ jobs:
       - run: ruff check src/ tests/
       - run: pytest -v
 
-  publish:
+  pypi:
     needs: test
     runs-on: ubuntu-latest
     steps:
@@ -31,3 +31,20 @@ jobs:
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+
+  chocolatey:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set version from tag
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          (Get-Content packaging/chocolatey/wst.nuspec) -replace '<version>.*</version>', "<version>$version</version>" | Set-Content packaging/chocolatey/wst.nuspec
+      - name: Pack and push
+        shell: pwsh
+        run: |
+          cd packaging/chocolatey
+          choco pack
+          choco push --source https://push.chocolatey.org/ --api-key ${{ secrets.CHOCOLATEY_API_KEY }}
