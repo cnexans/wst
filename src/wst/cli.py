@@ -61,6 +61,22 @@ def ingest(ctx: click.Context, path: Path | None, confirm: bool) -> None:
         db.close()
 
 
+@cli.command()
+@click.pass_context
+def browse(ctx: click.Context) -> None:
+    """Interactive browser for viewing and editing documents."""
+    from wst.browse import browse_library
+
+    config: WstConfig = ctx.obj["config"]
+    db = Database(config.db_path)
+    storage = LocalStorage(config.library_path)
+
+    try:
+        browse_library(db, storage, config.library_path)
+    finally:
+        db.close()
+
+
 def _copy_to_inbox(source: Path, inbox: Path) -> int:
     """Copy PDF(s) from source to inbox. Returns count of files copied."""
     inbox.mkdir(parents=True, exist_ok=True)
