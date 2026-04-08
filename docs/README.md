@@ -94,7 +94,28 @@ def exists(dest_relative) -> bool
 def list_files(prefix) -> list[str]
 ```
 
-The MVP implementation (`LocalStorage`) uses `shutil.move` and local filesystem operations. A future `S3Storage` would implement the same interface with boto3.
+The MVP implementation (`LocalStorage`) uses `shutil.copy2` and local filesystem operations. `CompositeStorage` wraps a primary backend with zero or more backup backends, so all stored files are automatically replicated.
+
+### Backup Providers
+
+The `BackupProvider` abstract class (`backup.py`) defines the interface for cloud backup:
+
+```python
+def backup_file(source, dest_relative) -> None
+def backup_all(library_path) -> int
+def is_configured() -> bool
+def configure() -> None  # interactive setup
+```
+
+The `ICloudProvider` implementation copies files to iCloud Drive, preserving the library folder structure. It auto-detects the iCloud path based on the OS:
+
+| OS | iCloud Drive Path |
+|----|-------------------|
+| macOS | `~/Library/Mobile Documents/com~apple~CloudDocs/wst/` |
+| Windows | `~/iCloudDrive/wst/` |
+| Linux | Not supported (use future S3 provider) |
+
+New providers (S3, Google Drive, etc.) can be added by subclassing `BackupProvider` and registering in the `PROVIDERS` dict.
 
 ## SQLite Schema
 
@@ -116,7 +137,9 @@ src/wst/
 ├── db.py             # SQLite + FTS5 database operations
 ├── ai.py             # AI backend abstraction + Claude CLI implementation
 ├── storage.py        # Storage backend abstraction + local filesystem implementation
-└── ingest.py         # Ingest orchestration pipeline
+├── ingest.py         # Ingest orchestration pipeline
+├── browse.py         # Interactive TUI for browsing and editing documents
+└── backup.py         # Backup provider abstraction + iCloud implementation
 ```
 
 ## Building Diagrams
