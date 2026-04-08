@@ -71,6 +71,17 @@ class Database:
         ).fetchone()
         return row is not None
 
+    def delete_by_hash(self, file_hash: str) -> str | None:
+        """Delete entry by hash. Returns the file_path if found, None otherwise."""
+        row = self.conn.execute(
+            "SELECT id, file_path FROM documents WHERE file_hash = ?", (file_hash,)
+        ).fetchone()
+        if row is None:
+            return None
+        self.conn.execute("DELETE FROM documents WHERE id = ?", (row["id"],))
+        self.conn.commit()
+        return row["file_path"]
+
     def insert(self, entry: LibraryEntry) -> int:
         m = entry.metadata
         cur = self.conn.execute(

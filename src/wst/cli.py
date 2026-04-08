@@ -22,8 +22,9 @@ def cli(ctx: click.Context) -> None:
 @cli.command()
 @click.argument("path", type=click.Path(exists=True, path_type=Path), required=False, default=None)
 @click.option("--confirm", "-c", is_flag=True, help="Manually confirm metadata for each file")
+@click.option("--reprocess", "-r", is_flag=True, help="Re-ingest duplicates with fresh AI metadata")
 @click.pass_context
-def ingest(ctx: click.Context, path: Path | None, confirm: bool) -> None:
+def ingest(ctx: click.Context, path: Path | None, confirm: bool, reprocess: bool) -> None:
     """Ingest PDFs into the library.
 
     \b
@@ -56,7 +57,14 @@ def ingest(ctx: click.Context, path: Path | None, confirm: bool) -> None:
     db = Database(config.db_path)
 
     try:
-        ingest_inbox(config.inbox_path, ai, storage, db, auto_confirm=not confirm)
+        ingest_inbox(
+            config.inbox_path,
+            ai,
+            storage,
+            db,
+            auto_confirm=not confirm,
+            reprocess=reprocess,
+        )
     finally:
         db.close()
 

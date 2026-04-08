@@ -46,6 +46,7 @@ def ingest_file(
     storage: StorageBackend,
     db: Database,
     auto_confirm: bool = False,
+    reprocess: bool = False,
 ) -> bool:
     """Ingest a single PDF file. Returns True if successfully ingested."""
     click.echo(f"\nProcessing: {path.name}")
@@ -53,8 +54,12 @@ def ingest_file(
     # Check for duplicates
     file_hash = compute_file_hash(path)
     if db.exists_hash(file_hash):
-        click.echo(f"  Skipped (duplicate): {path.name}")
-        return False
+        if not reprocess:
+            click.echo(f"  Skipped (duplicate): {path.name}")
+            return False
+        old_path = db.delete_by_hash(file_hash)
+        if old_path:
+            click.echo(f"  Reprocessing (replacing: {old_path})")
 
     # Extract PDF info
     try:
@@ -115,6 +120,7 @@ def ingest_inbox(
     storage: StorageBackend,
     db: Database,
     auto_confirm: bool = False,
+    reprocess: bool = False,
 ) -> tuple[int, int]:
     """Ingest all PDFs from inbox recursively. Returns (processed, ingested) counts."""
     pdfs = sorted(inbox_path.rglob("*.pdf"))
@@ -129,7 +135,7 @@ def ingest_inbox(
     for pdf_path in pdfs:
         processed += 1
         click.echo(f"\n[{processed}/{len(pdfs)}]")
-        if ingest_file(pdf_path, ai, storage, db, auto_confirm):
+        if ingest_file(pdf_path, ai, storage, db, auto_confirm, reprocess):
             ingested += 1
 
     click.echo(f"\nDone: {ingested}/{processed} files ingested.")
