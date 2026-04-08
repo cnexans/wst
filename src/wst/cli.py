@@ -7,7 +7,8 @@ from wst.ai import get_ai_backend
 from wst.config import WstConfig
 from wst.db import Database
 from wst.ingest import ingest_inbox
-from wst.storage import LocalStorage
+from wst.models import DocType, LibraryEntry
+from wst.storage import LocalStorage, build_dest_path
 
 
 @click.group()
@@ -88,14 +89,21 @@ def _copy_to_inbox(source: Path, inbox: Path) -> int:
 @click.argument("query", default="")
 @click.option("--author", "-a", default=None, help="Filter by author")
 @click.option("--type", "-t", "doc_type", default=None, help="Filter by document type")
+@click.option("--subject", "-s", default=None, help="Filter by subject/knowledge area")
 @click.pass_context
-def search(ctx: click.Context, query: str, author: str | None, doc_type: str | None) -> None:
+def search(
+    ctx: click.Context,
+    query: str,
+    author: str | None,
+    doc_type: str | None,
+    subject: str | None,
+) -> None:
     """Search documents by title, author, tags, or subject."""
     config: WstConfig = ctx.obj["config"]
     db = Database(config.db_path)
 
     try:
-        results = db.search(query, doc_type=doc_type, author=author)
+        results = db.search(query, doc_type=doc_type, author=author, subject=subject)
         if not results:
             click.echo("No results found.")
             return
@@ -139,12 +147,7 @@ def show(ctx: click.Context, identifier: str) -> None:
     db = Database(config.db_path)
 
     try:
-        # Try as ID first
-        entry = None
-        if identifier.isdigit():
-            entry = db.get(int(identifier))
-        if entry is None:
-            entry = db.get_by_title(identifier)
+        entry = _find_entry(db, identifier)
         if entry is None:
             click.echo(f"Document not found: {identifier}")
             raise SystemExit(1)
@@ -168,6 +171,100 @@ def show(ctx: click.Context, identifier: str) -> None:
         click.echo(f"Ingested at:   {entry.ingested_at}")
     finally:
         db.close()
+
+
+@cli.command()
+@click.argument("identifier")
+@click.pass_context
+def edit(ctx: click.Context, identifier: str) -> None:
+    """Interactively edit metadata for a document.
+
+    \b
+    Shows current values and lets you change any field.
+    Press Enter to keep the current value. If the document type
+    changes, the file is moved to the correct folder.
+
+    \b
+    Examples:
+        wst edit 1
+        wst edit "Player's Handbook"
+    """
+    config: WstConfig = ctx.obj["config"]
+    db = Database(config.db_path)
+    storage = LocalStorage(config.library_path)
+
+    try:
+        entry = _find_entry(db, identifier)
+        if entry is None:
+            click.echo(f"Document not found: {identifier}")
+            raise SystemExit(1)
+
+        m = entry.metadata
+        click.echo(f"\nEditing: {m.title} (ID {entry.id})")
+        click.echo("Press Enter to keep current value.\n")
+
+        m.title = _prompt_field("Title", m.title)
+        m.author = _prompt_field("Author", m.author)
+        m.doc_type = _prompt_doc_type(m.doc_type)
+        year_str = _prompt_field("Year", str(m.year) if m.year else "")
+        m.year = int(year_str) if year_str else None
+        m.publisher = _prompt_field("Publisher", m.publisher or "") or None
+        m.isbn = _prompt_field("ISBN", m.isbn or "") or None
+        m.language = _prompt_field("Language", m.language or "") or None
+        m.subject = _prompt_field("Subject", m.subject or "") or None
+        tags_str = _prompt_field("Tags (comma-separated)", ", ".join(m.tags))
+        m.tags = [t.strip() for t in tags_str.split(",") if t.strip()] if tags_str else []
+        m.summary = _prompt_field("Summary", m.summary or "") or None
+
+        # Rebuild destination path and move if needed
+        new_dest = build_dest_path(m)
+        old_path = entry.file_path
+
+        if new_dest != old_path:
+            old_full = config.library_path / old_path
+            if old_full.exists():
+                final = storage.store(old_full, new_dest)
+                old_full.unlink()
+                entry.file_path = final
+                entry.filename = Path(final).name
+                click.echo(f"\nMoved: {old_path} -> {final}")
+            else:
+                entry.file_path = new_dest
+                entry.filename = Path(new_dest).name
+                click.echo(f"\nWarning: old file not found at {old_path}, updated path in DB only.")
+        else:
+            click.echo("")
+
+        db.update(entry)
+        click.echo("Updated successfully.")
+    finally:
+        db.close()
+
+
+def _find_entry(db: Database, identifier: str) -> LibraryEntry | None:
+    entry = None
+    if identifier.isdigit():
+        entry = db.get(int(identifier))
+    if entry is None:
+        entry = db.get_by_title(identifier)
+    return entry
+
+
+def _prompt_field(label: str, current: str) -> str:
+    value = click.prompt(f"  {label}", default=current, show_default=True)
+    return value.strip()
+
+
+def _prompt_doc_type(current: DocType) -> DocType:
+    types = list(DocType)
+    click.echo(f"  Type [{current.value}]:")
+    for i, dt in enumerate(types, 1):
+        marker = " <-" if dt == current else ""
+        click.echo(f"    {i}. {dt.value}{marker}")
+    choice = click.prompt("  Choose number or Enter to keep", default="", show_default=False)
+    if choice and choice.isdigit() and 1 <= int(choice) <= len(types):
+        return types[int(choice) - 1]
+    return current
 
 
 def _print_table(entries: list) -> None:

@@ -103,7 +103,11 @@ class Database:
         return cur.lastrowid  # type: ignore[return-value]
 
     def search(
-        self, query: str, doc_type: str | None = None, author: str | None = None
+        self,
+        query: str,
+        doc_type: str | None = None,
+        author: str | None = None,
+        subject: str | None = None,
     ) -> list[LibraryEntry]:
         if query:
             sql = """SELECT d.* FROM documents d
@@ -120,6 +124,9 @@ class Database:
         if author:
             sql += " AND d.author LIKE ?"
             params.append(f"%{author}%")
+        if subject:
+            sql += " AND d.subject LIKE ?"
+            params.append(f"%{subject}%")
 
         sql += " ORDER BY d.title"
         rows = self.conn.execute(sql, params).fetchall()
@@ -138,6 +145,50 @@ class Database:
 
         rows = self.conn.execute(sql, params).fetchall()
         return [self._row_to_entry(r) for r in rows]
+
+    def update(self, entry: LibraryEntry) -> None:
+        m = entry.metadata
+        # Delete old FTS entry before update
+        fts_del = (
+            "INSERT INTO documents_fts"
+            "(documents_fts, rowid, title, author, tags, subject, summary) "
+            "VALUES ('delete', ?, ?, ?, ?, ?, ?)"
+        )
+        self.conn.execute(
+            fts_del,
+            (entry.id, m.title, m.author, json.dumps(m.tags), m.subject, m.summary),
+        )
+        self.conn.execute(
+            """UPDATE documents SET
+               title=?, author=?, doc_type=?, year=?, publisher=?, isbn=?,
+               language=?, tags=?, page_count=?, summary=?, toc=?, subject=?,
+               filename=?, file_path=?
+               WHERE id=?""",
+            (
+                m.title,
+                m.author,
+                m.doc_type.value,
+                m.year,
+                m.publisher,
+                m.isbn,
+                m.language,
+                json.dumps(m.tags),
+                m.page_count,
+                m.summary,
+                m.table_of_contents,
+                m.subject,
+                entry.filename,
+                entry.file_path,
+                entry.id,
+            ),
+        )
+        # Re-insert FTS entry
+        self.conn.execute(
+            "INSERT INTO documents_fts(rowid, title, author, tags, subject, summary) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (entry.id, m.title, m.author, json.dumps(m.tags), m.subject, m.summary),
+        )
+        self.conn.commit()
 
     def get(self, doc_id: int) -> LibraryEntry | None:
         row = self.conn.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()
