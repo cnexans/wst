@@ -23,12 +23,12 @@ The system is composed of:
 
 The ingest pipeline processes each PDF through these steps:
 
-1. **Hash check**: Compute SHA-256 and check against the database to skip duplicates.
+1. **Hash check**: Compute SHA-256 and check against the database to skip duplicates (or replace if `--reprocess` is set).
 2. **Extract**: Read existing PDF metadata and text from the first 5 pages using PyMuPDF.
-3. **AI generation**: Send extracted data to the AI backend, which returns a structured `DocumentMetadata` object. The Claude CLI backend uses `--json-schema` to enforce the Pydantic model schema.
-4. **User confirmation**: Display the generated metadata and prompt for confirmation.
+3. **AI generation**: Send extracted data to the AI backend, which returns a structured `DocumentMetadata` object. The Claude CLI backend uses web search (`WebSearch`, `WebFetch` tools) to find missing year, ISBN, and publisher information online.
+4. **User confirmation**: Display the generated metadata (auto-confirmed by default, use `--confirm` for manual review).
 5. **Write metadata**: Update the PDF's internal metadata fields (title, author, subject).
-6. **Store**: Move the file to the library under `{type}/{Author} - {Title} ({Year}).pdf`.
+6. **Store**: Copy the file to the library under `{type}/{Author} - {Title} ({Year}).pdf`, then remove the original from inbox.
 7. **Index**: Insert the full metadata record into SQLite with FTS5 indexing.
 
 ## Data Model
@@ -80,7 +80,7 @@ The `AIBackend` abstract class defines a single method:
 def generate_metadata(existing_meta, text_sample, filename) -> DocumentMetadata
 ```
 
-The MVP implementation (`ClaudeCLIBackend`) calls `claude -p --output-format json --json-schema <schema>` as a subprocess. The JSON schema is derived from `DocumentMetadata.model_json_schema()`, so the AI output is validated against the Pydantic model automatically.
+The MVP implementation (`ClaudeCLIBackend`) calls `claude -p --output-format json` as a subprocess with `WebSearch` and `WebFetch` tools enabled. The AI uses web search to find missing publication year, ISBN, and publisher when the information is not present in the PDF text. The JSON schema is included in the prompt so the AI returns structured output validated against the Pydantic model.
 
 Future implementations can use the Anthropic Python SDK, OpenAI-compatible APIs, or other CLI tools — each as a new subclass, no changes to core logic.
 

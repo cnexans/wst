@@ -18,7 +18,7 @@ Named after **Wan Shi Tong**, the ancient spirit who collected every piece of kn
 
 ## Features
 
-- **AI-powered metadata**: Automatically extracts and completes metadata (title, author, type, year, summary, tags, etc.) using Claude CLI
+- **AI-powered metadata**: Automatically extracts and completes metadata (title, author, type, year, summary, tags, etc.) using Claude CLI with web search for missing fields (year, ISBN, publisher)
 - **Organized library**: Files sorted by type (`books/`, `papers/`, `notes/`, `exercises/`, `guides/`) with consistent naming (`Author - Title (Year).pdf`)
 - **SQLite search index**: Full-text search across title, author, tags, subject, and summary via FTS5
 - **Interactive browser**: Fuzzy-search your library, view and edit metadata interactively
@@ -54,6 +54,9 @@ wst ingest
 # Ingest with manual confirmation for each file
 wst ingest --confirm
 
+# Re-ingest files with fresh AI metadata (e.g. after enabling web search)
+wst ingest --reprocess
+
 # Search
 wst search "machine learning"
 wst search --author "Knuth"
@@ -86,7 +89,7 @@ wst backup                           # interactive: choose provider
 
 | Command | Description |
 |---------|-------------|
-| `wst ingest [PATH] [--confirm]` | Ingest PDFs from a path or the inbox, generate metadata with AI |
+| `wst ingest [PATH] [--confirm] [--reprocess]` | Ingest PDFs from a path or the inbox, generate metadata with AI |
 | `wst search <query> [--author] [--type] [--subject]` | Full-text search across the index |
 | `wst list [--type] [--sort]` | List all documents in the library |
 | `wst show <id-or-title>` | Show complete metadata for a document |
