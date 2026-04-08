@@ -48,3 +48,10 @@ jobs:
               --title "v${{ inputs.version }}" \
               --notes "$NOTES"
           fi
+
+  publish:
+    needs: create-tag-and-release
+    uses: ./.github/workflows/release.yml
+    with:
+      version: ${{ inputs.version }}
+    secrets: inherit
