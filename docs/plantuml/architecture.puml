@@ -1,0 +1,58 @@
+@startuml architecture
+!theme plain
+skinparam defaultTextAlignment center
+
+title wst — Architecture Overview
+
+package "CLI Layer" {
+    component "cli.py" as CLI
+}
+
+package "Core Logic" {
+    component "ingest.py" as INGEST
+    component "models.py" as MODELS
+    component "config.py" as CONFIG
+}
+
+package "PDF" {
+    component "pdf.py" as PDFMOD
+}
+
+package "Persistence" {
+    component "db.py" as DB
+    database "SQLite + FTS5" as SQLITE
+}
+
+package "AI Backend" {
+    component "AIBackend\n(abstract)" as AI_IF
+    component "ClaudeCLIBackend" as CLAUDE
+}
+
+package "Storage Backend" {
+    component "StorageBackend\n(abstract)" as STORAGE_IF
+    component "LocalStorage" as LOCAL
+}
+
+CLI --> INGEST
+CLI --> DB
+CLI --> CONFIG
+INGEST --> PDFMOD
+INGEST --> AI_IF
+INGEST --> STORAGE_IF
+INGEST --> DB
+INGEST --> MODELS
+DB --> SQLITE
+AI_IF <.. CLAUDE
+STORAGE_IF <.. LOCAL
+
+note right of CLAUDE
+  MVP: claude -p --json-schema
+  Future: API SDKs, Codex, etc.
+end note
+
+note right of LOCAL
+  MVP: local filesystem
+  Future: S3, GCS, etc.
+end note
+
+@enduml

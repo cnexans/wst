@@ -1,0 +1,57 @@
+@startuml data_model
+!theme plain
+title Data Model
+
+enum DocType {
+    book
+    novel
+    textbook
+    paper
+    class-notes
+    exercises
+    guide-theory
+    guide-practice
+}
+
+class DocumentMetadata {
+    title: str
+    author: str
+    doc_type: DocType
+    year: int | None
+    publisher: str | None
+    isbn: str | None
+    language: str | None
+    tags: list[str]
+    page_count: int | None
+    summary: str | None
+    table_of_contents: str | None
+    subject: str | None
+}
+
+class LibraryEntry {
+    id: int | None
+    metadata: DocumentMetadata
+    filename: str
+    original_filename: str
+    file_path: str
+    file_hash: str (SHA-256)
+    ingested_at: str (ISO 8601)
+}
+
+LibraryEntry *-- DocumentMetadata
+DocumentMetadata --> DocType
+
+map DOCTYPE_FOLDER {
+    book => libros/
+    novel => libros/
+    textbook => libros/
+    paper => papers/
+    class-notes => notas/
+    exercises => ejercicios/
+    guide-theory => guias/
+    guide-practice => guias/
+}
+
+DocType ..> DOCTYPE_FOLDER
+
+@enduml

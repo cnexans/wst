@@ -1,0 +1,39 @@
+@startuml ingest_flow
+!theme plain
+title Ingest Flow
+
+start
+
+:Scan inbox recursively for *.pdf;
+
+while (More PDFs?) is (yes)
+    :Compute SHA-256 hash;
+
+    if (Hash exists in DB?) then (yes)
+        :Skip (duplicate);
+    else (no)
+        :Extract metadata & text\n(first 5 pages) via PyMuPDF;
+
+        :Send to AI backend\n(claude -p --json-schema);
+
+        :Receive structured\nDocumentMetadata;
+
+        :Display metadata to user;
+
+        if (User confirms?) then (yes)
+            :Write metadata to PDF;
+
+            :Move to library/\n{type}/{Author} - {Title} ({Year}).pdf;
+
+            :Insert into SQLite index;
+        else (no)
+            :Skip file;
+        endif
+    endif
+endwhile (no)
+
+:Print summary\n(ingested / total);
+
+stop
+
+@enduml

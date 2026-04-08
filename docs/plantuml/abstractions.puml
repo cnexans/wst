@@ -1,0 +1,47 @@
+@startuml abstractions
+!theme plain
+title Backend Abstractions
+
+package "AI Backend" {
+    abstract class AIBackend {
+        {abstract} +generate_metadata(existing_meta, text_sample, filename): DocumentMetadata
+    }
+
+    class ClaudeCLIBackend {
+        -model: str
+        +generate_metadata(existing_meta, text_sample, filename): DocumentMetadata
+    }
+
+    class "Future: AnthropicAPIBackend" as API_BACKEND #LightGray {
+    }
+
+    class "Future: CodexCLIBackend" as CODEX_BACKEND #LightGray {
+    }
+
+    AIBackend <|-- ClaudeCLIBackend
+    AIBackend <|-- API_BACKEND
+    AIBackend <|-- CODEX_BACKEND
+}
+
+package "Storage Backend" {
+    abstract class StorageBackend {
+        {abstract} +store(source_path, dest_relative): str
+        {abstract} +exists(dest_relative): bool
+        {abstract} +list_files(prefix): list[str]
+    }
+
+    class LocalStorage {
+        -library_root: Path
+        +store(source_path, dest_relative): str
+        +exists(dest_relative): bool
+        +list_files(prefix): list[str]
+    }
+
+    class "Future: S3Storage" as S3_STORAGE #LightGray {
+    }
+
+    StorageBackend <|-- LocalStorage
+    StorageBackend <|-- S3_STORAGE
+}
+
+@enduml
