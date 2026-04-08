@@ -15,7 +15,11 @@ def browse_library(db: Database, storage: LocalStorage, library_path: Path) -> N
             print("Library is empty.")
             return
 
-        choice = _select_document(entries)
+        try:
+            choice = _select_document(entries)
+        except KeyboardInterrupt:
+            print("\nBye.")
+            return
         if choice is None:
             return
 
@@ -24,7 +28,7 @@ def browse_library(db: Database, storage: LocalStorage, library_path: Path) -> N
 
 def _select_document(entries: list[LibraryEntry]) -> LibraryEntry | None:
     """Show a fuzzy-searchable list of documents. Returns selected entry or None."""
-    choices = [
+    choices = [{"name": "Exit", "value": None}] + [
         {
             "name": _format_row(e),
             "value": e,
@@ -33,12 +37,9 @@ def _select_document(entries: list[LibraryEntry]) -> LibraryEntry | None:
     ]
 
     result = inquirer.fuzzy(
-        message="Search and select a document (type to filter, arrows to navigate):",
+        message="Select a document (type to filter, Ctrl+C to quit):",
         choices=choices,
         max_height="70%",
-        validate=lambda _: True,
-        instruction="(ESC to quit)",
-        mandatory=False,
     ).execute()
 
     return result
