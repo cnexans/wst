@@ -19,5 +19,3 @@ Thumbs.db
 
 # Project
 *.db
-docs/images/*.png
-!docs/images/wan-shi-tong.png

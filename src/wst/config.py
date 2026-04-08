@@ -1,12 +1,15 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 
+WST_HOME = Path.home() / "wst"
+
 
 @dataclass
 class WstConfig:
-    inbox_path: Path = field(default_factory=lambda: Path("./inbox"))
-    library_path: Path = field(default_factory=lambda: Path("./library"))
-    db_path: Path = field(default_factory=lambda: Path("./library/wst.db"))
+    home_path: Path = field(default_factory=lambda: WST_HOME)
+    inbox_path: Path = field(default_factory=lambda: WST_HOME / "inbox")
+    library_path: Path = field(default_factory=lambda: WST_HOME / "library")
+    db_path: Path = field(default_factory=lambda: WST_HOME / "library" / "wst.db")
     ai_backend: str = "claude"
     ai_model: str = "sonnet"
 

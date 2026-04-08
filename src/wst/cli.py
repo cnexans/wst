@@ -1,3 +1,4 @@
+import shutil
 from pathlib import Path
 
 import click
@@ -18,29 +19,67 @@ def cli(ctx: click.Context) -> None:
 
 
 @cli.command()
-@click.option("--inbox", type=click.Path(exists=True, path_type=Path), default=None,
-              help="Path to inbox folder (default: ./inbox)")
+@click.argument("path", type=click.Path(exists=True, path_type=Path), required=False, default=None)
 @click.option("--confirm", "-c", is_flag=True, help="Manually confirm metadata for each file")
 @click.pass_context
-def ingest(ctx: click.Context, inbox: Path | None, confirm: bool) -> None:
-    """Scan inbox for PDFs, generate metadata with AI, and organize."""
+def ingest(ctx: click.Context, path: Path | None, confirm: bool) -> None:
+    """Ingest PDFs into the library.
+
+    \b
+    Without arguments, processes all PDFs in ~/wst/inbox/.
+    With a PATH argument (file or directory), copies PDFs to the inbox first,
+    then processes them.
+
+    \b
+    Examples:
+        wst ingest                        # process inbox
+        wst ingest ~/Downloads/book.pdf   # ingest a single file
+        wst ingest ~/Documents/papers/    # ingest a whole folder
+    """
     config: WstConfig = ctx.obj["config"]
-    inbox_path = inbox or config.inbox_path
-
-    if not inbox_path.exists():
-        click.echo(f"Inbox not found: {inbox_path}")
-        click.echo("Create it and add PDFs, then run again.")
-        raise SystemExit(1)
-
     config.ensure_dirs()
+
+    if path is not None:
+        copied = _copy_to_inbox(path, config.inbox_path)
+        if copied == 0:
+            click.echo("No PDF files found at the given path.")
+            return
+        click.echo(f"Copied {copied} PDF(s) to inbox.")
+
+    if not config.inbox_path.exists() or not any(config.inbox_path.rglob("*.pdf")):
+        click.echo(f"No PDFs in inbox ({config.inbox_path}).")
+        return
+
     ai = get_ai_backend(config.ai_backend, config.ai_model)
     storage = LocalStorage(config.library_path)
     db = Database(config.db_path)
 
     try:
-        ingest_inbox(inbox_path, ai, storage, db, auto_confirm=not confirm)
+        ingest_inbox(config.inbox_path, ai, storage, db, auto_confirm=not confirm)
     finally:
         db.close()
+
+
+def _copy_to_inbox(source: Path, inbox: Path) -> int:
+    """Copy PDF(s) from source to inbox. Returns count of files copied."""
+    inbox.mkdir(parents=True, exist_ok=True)
+    count = 0
+    if source.is_file():
+        if source.suffix.lower() == ".pdf":
+            shutil.copy2(str(source), str(inbox / source.name))
+            count = 1
+    elif source.is_dir():
+        for pdf in source.rglob("*.pdf"):
+            dest = inbox / pdf.name
+            if dest.exists():
+                stem, suffix = dest.stem, dest.suffix
+                counter = 1
+                while dest.exists():
+                    dest = inbox / f"{stem} ({counter}){suffix}"
+                    counter += 1
+            shutil.copy2(str(pdf), str(dest))
+            count += 1
+    return count
 
 
 @cli.command()
