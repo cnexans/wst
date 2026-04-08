@@ -82,6 +82,17 @@ class Database:
         self.conn.commit()
         return row["file_path"]
 
+    def delete(self, doc_id: int) -> str | None:
+        """Delete entry by ID. Returns the file_path if found, None otherwise."""
+        row = self.conn.execute(
+            "SELECT file_path FROM documents WHERE id = ?", (doc_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        self.conn.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
+        self.conn.commit()
+        return row["file_path"]
+
     def insert(self, entry: LibraryEntry) -> int:
         m = entry.metadata
         cur = self.conn.execute(

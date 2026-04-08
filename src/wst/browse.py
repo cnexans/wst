@@ -23,7 +23,7 @@ def browse_library(db: Database, storage: LocalStorage, library_path: Path) -> N
         if choice is None:
             return
 
-        _edit_document(choice, db, storage, library_path)
+        _document_actions(choice, db, storage, library_path)
 
 
 def _select_document(entries: list[LibraryEntry]) -> LibraryEntry | None:
@@ -36,13 +36,11 @@ def _select_document(entries: list[LibraryEntry]) -> LibraryEntry | None:
         for e in entries
     ]
 
-    result = inquirer.fuzzy(
+    return inquirer.fuzzy(
         message="Select a document (type to filter, Ctrl+C to quit):",
         choices=choices,
         max_height="70%",
     ).execute()
-
-    return result
 
 
 def _format_row(entry: LibraryEntry) -> str:
@@ -52,6 +50,59 @@ def _format_row(entry: LibraryEntry) -> str:
     doc_type = m.doc_type.value[:12].ljust(12)
     subject = (m.subject or "")[:20]
     return f"[{entry.id:>3}] {m.title[:45]:<45}  {m.author[:25]:<25}  {doc_type}  {year}  {subject}"
+
+
+def _document_actions(
+    entry: LibraryEntry, db: Database, storage: LocalStorage, library_path: Path
+) -> None:
+    """Show action menu for a selected document."""
+    m = entry.metadata
+    print(f"\n  {m.title} — {m.author}")
+
+    action = inquirer.select(
+        message="Action:",
+        choices=[
+            {"name": "Edit metadata", "value": "edit"},
+            {"name": "Delete", "value": "delete"},
+            {"name": "Back", "value": "back"},
+        ],
+    ).execute()
+
+    if action == "edit":
+        _edit_document(entry, db, storage, library_path)
+    elif action == "delete":
+        _delete_document(entry, db, library_path)
+
+
+def _delete_document(entry: LibraryEntry, db: Database, library_path: Path) -> None:
+    """Delete a document from the library and database."""
+    m = entry.metadata
+    print(f"\n  Title:  {m.title}")
+    print(f"  Author: {m.author}")
+    print(f"  File:   {entry.file_path}")
+
+    confirm = inquirer.confirm(
+        message="Delete this document? This removes the file and the database entry.",
+        default=False,
+    ).execute()
+
+    if not confirm:
+        print("Cancelled.\n")
+        return
+
+    # Remove from DB
+    db.delete(entry.id)
+
+    # Remove file
+    file_path = library_path / entry.file_path
+    if file_path.exists():
+        file_path.unlink()
+        # Clean up empty parent directories
+        parent = file_path.parent
+        if parent != library_path and not any(parent.iterdir()):
+            parent.rmdir()
+
+    print(f"Deleted: {entry.file_path}\n")
 
 
 def _edit_document(
