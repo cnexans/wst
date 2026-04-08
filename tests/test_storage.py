@@ -40,6 +40,14 @@ class TestBuildDestPath:
         )
         assert build_dest_path(meta) == "notes/Prof Smith - Lecture 5 (2024).pdf"
 
+    def test_epub_extension(self):
+        meta = DocumentMetadata(title="A Novel", author="Author", doc_type=DocType.NOVEL, year=2020)
+        assert build_dest_path(meta, extension=".epub") == "books/Author - A Novel (2020).epub"
+
+    def test_djvu_extension(self):
+        meta = DocumentMetadata(title="Math Book", author="Author", doc_type=DocType.TEXTBOOK)
+        assert build_dest_path(meta, extension=".djvu") == "books/Author - Math Book.djvu"
+
     def test_sanitizes_special_chars(self):
         meta = DocumentMetadata(title="What is C++?", author="Author", doc_type=DocType.BOOK)
         path = build_dest_path(meta)

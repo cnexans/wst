@@ -93,8 +93,10 @@ class ICloudProvider(BackupProvider):
         shutil.copy2(str(source), str(dest))
 
     def backup_all(self, library_path: Path) -> int:
+        from wst.document import is_supported
+
         count = 0
-        for pdf in sorted(library_path.rglob("*.pdf")):
+        for pdf in sorted(p for p in library_path.rglob("*") if p.is_file() and is_supported(p)):
             relative = str(pdf.relative_to(library_path))
             print(f"  {relative}...", end=" ", flush=True)
             self.backup_file(pdf, relative)

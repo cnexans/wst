@@ -75,7 +75,13 @@ class LocalStorage(StorageBackend):
         root = self.library_root / prefix
         if not root.exists():
             return []
-        return [str(p.relative_to(self.library_root)) for p in root.rglob("*.pdf")]
+        from wst.document import SUPPORTED_EXTENSIONS
+
+        return [
+            str(p.relative_to(self.library_root))
+            for p in root.rglob("*")
+            if p.suffix.lower() in SUPPORTED_EXTENSIONS
+        ]
 
 
 def sanitize_filename(s: str) -> str:
@@ -85,11 +91,11 @@ def sanitize_filename(s: str) -> str:
     return s
 
 
-def build_dest_path(meta: DocumentMetadata) -> str:
+def build_dest_path(meta: DocumentMetadata, extension: str = ".pdf") -> str:
     """Build the destination relative path from metadata."""
     folder = DOCTYPE_FOLDER[meta.doc_type]
     author = sanitize_filename(meta.author)
     title = sanitize_filename(meta.title)
     year_part = f" ({meta.year})" if meta.year else ""
-    filename = f"{author} - {title}{year_part}.pdf"
+    filename = f"{author} - {title}{year_part}{extension}"
     return f"{folder}/{filename}"

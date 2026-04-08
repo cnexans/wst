@@ -6,6 +6,7 @@ import click
 from wst.ai import get_ai_backend
 from wst.config import WstConfig
 from wst.db import Database
+from wst.document import is_supported
 from wst.ingest import ingest_inbox
 from wst.models import DocType, LibraryEntry
 from wst.storage import LocalStorage, build_dest_path
@@ -46,10 +47,12 @@ def ingest(ctx: click.Context, path: Path | None, confirm: bool, reprocess: bool
         if copied == 0:
             click.echo("No PDF files found at the given path.")
             return
-        click.echo(f"Copied {copied} PDF(s) to inbox.")
+        click.echo(f"Copied {copied} file(s) to inbox.")
 
-    if not config.inbox_path.exists() or not any(config.inbox_path.rglob("*.pdf")):
-        click.echo(f"No PDFs in inbox ({config.inbox_path}).")
+    if not config.inbox_path.exists() or not any(
+        p for p in config.inbox_path.rglob("*") if is_supported(p)
+    ):
+        click.echo(f"No supported files in inbox ({config.inbox_path}).")
         return
 
     ai = get_ai_backend(config.ai_backend, config.ai_model)
@@ -134,17 +137,17 @@ def browse(ctx: click.Context) -> None:
 
 
 def _copy_to_inbox(source: Path, inbox: Path) -> int:
-    """Copy PDF(s) from source to inbox. Returns count of files copied."""
+    """Copy supported files from source to inbox. Returns count of files copied."""
     inbox.mkdir(parents=True, exist_ok=True)
     count = 0
-    pdfs = []
+    files = []
     if source.is_file():
-        if source.suffix.lower() == ".pdf":
-            pdfs = [source]
+        if is_supported(source):
+            files = [source]
     elif source.is_dir():
-        pdfs = list(source.rglob("*.pdf"))
+        files = [p for p in source.rglob("*") if p.is_file() and is_supported(p)]
 
-    for pdf in pdfs:
+    for pdf in files:
         dest = inbox / pdf.name
         if dest.exists():
             stem, suffix = dest.stem, dest.suffix

@@ -6,8 +6,8 @@ import click
 
 from wst.ai import AIBackend
 from wst.db import Database
+from wst.document import SUPPORTED_EXTENSIONS, extract_doc_info, is_supported, write_doc_metadata
 from wst.models import LibraryEntry
-from wst.pdf import extract_pdf_info, write_pdf_metadata
 from wst.storage import StorageBackend, build_dest_path
 
 
@@ -48,7 +48,7 @@ def ingest_file(
     auto_confirm: bool = False,
     reprocess: bool = False,
 ) -> bool:
-    """Ingest a single PDF file. Returns True if successfully ingested."""
+    """Ingest a single document file. Returns True if successfully ingested."""
     click.echo(f"\nProcessing: {path.name}")
 
     # Check for duplicates
@@ -61,11 +61,11 @@ def ingest_file(
         if old_path:
             click.echo(f"  Reprocessing (replacing: {old_path})")
 
-    # Extract PDF info
+    # Extract document info
     try:
-        existing_meta, text_sample, page_count = extract_pdf_info(path)
+        existing_meta, text_sample, page_count = extract_doc_info(path)
     except Exception as e:
-        click.echo(f"  Error reading PDF: {e}")
+        click.echo(f"  Error reading file: {e}")
         return False
 
     # Generate metadata via AI
@@ -78,8 +78,9 @@ def ingest_file(
 
     metadata.page_count = page_count
 
-    # Build entry
-    dest_path = build_dest_path(metadata)
+    # Build entry (preserve original extension)
+    ext = path.suffix.lower()
+    dest_path = build_dest_path(metadata, extension=ext)
     entry = LibraryEntry(
         metadata=metadata,
         filename=Path(dest_path).name,
@@ -97,11 +98,11 @@ def ingest_file(
             click.echo("  Skipped.")
             return False
 
-    # Write metadata to PDF
+    # Write metadata (PDF only)
     try:
-        write_pdf_metadata(path, metadata.title, metadata.author, metadata.subject)
+        write_doc_metadata(path, metadata.title, metadata.author, metadata.subject)
     except Exception as e:
-        click.echo(f"  Warning: could not write metadata to PDF: {e}")
+        click.echo(f"  Warning: could not write metadata: {e}")
 
     # Store file (copy to all backends, then remove original)
     final_path = storage.store(path, dest_path)
@@ -114,6 +115,11 @@ def ingest_file(
     return True
 
 
+def _find_documents(inbox_path: Path) -> list[Path]:
+    """Find all supported documents recursively."""
+    return sorted(p for p in inbox_path.rglob("*") if p.is_file() and is_supported(p))
+
+
 def ingest_inbox(
     inbox_path: Path,
     ai: AIBackend,
@@ -122,20 +128,21 @@ def ingest_inbox(
     auto_confirm: bool = False,
     reprocess: bool = False,
 ) -> tuple[int, int]:
-    """Ingest all PDFs from inbox recursively. Returns (processed, ingested) counts."""
-    pdfs = sorted(inbox_path.rglob("*.pdf"))
-    if not pdfs:
-        click.echo("No PDF files found in inbox.")
+    """Ingest all documents from inbox recursively. Returns (processed, ingested) counts."""
+    docs = _find_documents(inbox_path)
+    if not docs:
+        click.echo("No supported files found in inbox.")
         return 0, 0
 
-    click.echo(f"Found {len(pdfs)} PDF(s) in {inbox_path}")
+    exts = ", ".join(sorted(SUPPORTED_EXTENSIONS))
+    click.echo(f"Found {len(docs)} file(s) in {inbox_path} ({exts})")
     processed = 0
     ingested = 0
 
-    for pdf_path in pdfs:
+    for doc_path in docs:
         processed += 1
-        click.echo(f"\n[{processed}/{len(pdfs)}]")
-        if ingest_file(pdf_path, ai, storage, db, auto_confirm, reprocess):
+        click.echo(f"\n[{processed}/{len(docs)}]")
+        if ingest_file(doc_path, ai, storage, db, auto_confirm, reprocess):
             ingested += 1
 
     click.echo(f"\nDone: {ingested}/{processed} files ingested.")
