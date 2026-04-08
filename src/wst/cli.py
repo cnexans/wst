@@ -61,6 +61,54 @@ def ingest(ctx: click.Context, path: Path | None, confirm: bool) -> None:
         db.close()
 
 
+@cli.group(invoke_without_command=True)
+@click.pass_context
+def backup(ctx: click.Context) -> None:
+    """Backup library files to a cloud provider."""
+    from wst.backup import PROVIDERS, run_backup_interactive
+
+    if ctx.invoked_subcommand is not None:
+        return
+
+    config: WstConfig = ctx.obj["config"]
+
+    # Interactive provider selection
+    from InquirerPy import inquirer
+
+    provider_names = list(PROVIDERS.keys())
+    choice = inquirer.select(
+        message="Choose backup provider:",
+        choices=provider_names,
+    ).execute()
+
+    provider = PROVIDERS[choice]()
+    db = Database(config.db_path)
+    try:
+        run_backup_interactive(provider, db, config.library_path)
+    finally:
+        db.close()
+
+
+@backup.command("icloud")
+@click.argument("identifier", required=False, default=None)
+@click.pass_context
+def backup_icloud(ctx: click.Context, identifier: str | None) -> None:
+    """Backup files to iCloud Drive."""
+    from wst.backup import ICloudProvider, run_backup_file, run_backup_interactive
+
+    config: WstConfig = ctx.obj["config"]
+    provider = ICloudProvider()
+    db = Database(config.db_path)
+
+    try:
+        if identifier:
+            run_backup_file(provider, db, config.library_path, identifier)
+        else:
+            run_backup_interactive(provider, db, config.library_path)
+    finally:
+        db.close()
+
+
 @cli.command()
 @click.pass_context
 def browse(ctx: click.Context) -> None:
