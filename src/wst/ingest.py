@@ -1,5 +1,5 @@
 import hashlib
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import click
@@ -81,7 +81,7 @@ def ingest_file(
         original_filename=path.name,
         file_path=dest_path,
         file_hash=file_hash,
-        ingested_at=datetime.now(timezone.utc).isoformat(),
+        ingested_at=datetime.now(UTC).isoformat(),
     )
 
     # Show metadata and confirm

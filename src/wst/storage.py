@@ -18,12 +18,10 @@ class StorageBackend(ABC):
         ...
 
     @abstractmethod
-    def exists(self, dest_relative: str) -> bool:
-        ...
+    def exists(self, dest_relative: str) -> bool: ...
 
     @abstractmethod
-    def list_files(self, prefix: str = "") -> list[str]:
-        ...
+    def list_files(self, prefix: str = "") -> list[str]: ...
 
 
 class CompositeStorage(StorageBackend):
@@ -77,10 +75,7 @@ class LocalStorage(StorageBackend):
         root = self.library_root / prefix
         if not root.exists():
             return []
-        return [
-            str(p.relative_to(self.library_root))
-            for p in root.rglob("*.pdf")
-        ]
+        return [str(p.relative_to(self.library_root)) for p in root.rglob("*.pdf")]
 
 
 def sanitize_filename(s: str) -> str:

@@ -80,17 +80,31 @@ class Database:
                 filename, original_filename, file_path, file_hash, ingested_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                m.title, m.author, m.doc_type.value, m.year, m.publisher,
-                m.isbn, m.language, json.dumps(m.tags), m.page_count,
-                m.summary, m.table_of_contents, m.subject,
-                entry.filename, entry.original_filename, entry.file_path,
-                entry.file_hash, entry.ingested_at,
+                m.title,
+                m.author,
+                m.doc_type.value,
+                m.year,
+                m.publisher,
+                m.isbn,
+                m.language,
+                json.dumps(m.tags),
+                m.page_count,
+                m.summary,
+                m.table_of_contents,
+                m.subject,
+                entry.filename,
+                entry.original_filename,
+                entry.file_path,
+                entry.file_hash,
+                entry.ingested_at,
             ),
         )
         self.conn.commit()
         return cur.lastrowid  # type: ignore[return-value]
 
-    def search(self, query: str, doc_type: str | None = None, author: str | None = None) -> list[LibraryEntry]:
+    def search(
+        self, query: str, doc_type: str | None = None, author: str | None = None
+    ) -> list[LibraryEntry]:
         if query:
             sql = """SELECT d.* FROM documents d
                      JOIN documents_fts f ON d.id = f.rowid

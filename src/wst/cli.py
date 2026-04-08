@@ -64,21 +64,23 @@ def _copy_to_inbox(source: Path, inbox: Path) -> int:
     """Copy PDF(s) from source to inbox. Returns count of files copied."""
     inbox.mkdir(parents=True, exist_ok=True)
     count = 0
+    pdfs = []
     if source.is_file():
         if source.suffix.lower() == ".pdf":
-            shutil.copy2(str(source), str(inbox / source.name))
-            count = 1
+            pdfs = [source]
     elif source.is_dir():
-        for pdf in source.rglob("*.pdf"):
-            dest = inbox / pdf.name
-            if dest.exists():
-                stem, suffix = dest.stem, dest.suffix
-                counter = 1
-                while dest.exists():
-                    dest = inbox / f"{stem} ({counter}){suffix}"
-                    counter += 1
-            shutil.copy2(str(pdf), str(dest))
-            count += 1
+        pdfs = list(source.rglob("*.pdf"))
+
+    for pdf in pdfs:
+        dest = inbox / pdf.name
+        if dest.exists():
+            stem, suffix = dest.stem, dest.suffix
+            counter = 1
+            while dest.exists():
+                dest = inbox / f"{stem} ({counter}){suffix}"
+                counter += 1
+        shutil.copy2(str(pdf), str(dest))
+        count += 1
     return count
 
 
@@ -104,8 +106,14 @@ def search(ctx: click.Context, query: str, author: str | None, doc_type: str | N
 
 @cli.command(name="list")
 @click.option("--type", "-t", "doc_type", default=None, help="Filter by document type")
-@click.option("--sort", "-s", "sort_by", default="title",
-              type=click.Choice(["title", "author", "year"]), help="Sort by field")
+@click.option(
+    "--sort",
+    "-s",
+    "sort_by",
+    default="title",
+    type=click.Choice(["title", "author", "year"]),
+    help="Sort by field",
+)
 @click.pass_context
 def list_cmd(ctx: click.Context, doc_type: str | None, sort_by: str) -> None:
     """List all documents in the library."""
