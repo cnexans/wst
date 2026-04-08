@@ -27,15 +27,44 @@ Named after **Wan Shi Tong**, the ancient spirit who collected every piece of kn
 
 ## Installation
 
+### pipx (recommended, all platforms)
+
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .
+pipx install wst-library
 ```
 
-Or via Make:
+### pip
 
 ```bash
+pip install wst-library
+```
+
+### Homebrew (macOS/Linux)
+
+```bash
+brew tap cnexans/tap
+brew install wst
+```
+
+### Chocolatey (Windows)
+
+```powershell
+choco install wst
+```
+
+### apt (Debian/Ubuntu)
+
+```bash
+sudo add-apt-repository ppa:cnexans/wst
+sudo apt update
+sudo apt install wst
+```
+
+### From source
+
+```bash
+git clone https://github.com/cnexans/wst.git
+cd wst
 make install
 ```
 

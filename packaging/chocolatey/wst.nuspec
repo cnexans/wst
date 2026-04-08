@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>wst</id>
+    <version>0.1.0</version>
+    <title>wst — Wan Shi Tong</title>
+    <authors>cnexans</authors>
+    <projectUrl>https://github.com/cnexans/wst</projectUrl>
+    <licenseUrl>https://github.com/cnexans/wst/blob/main/LICENSE</licenseUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <description>CLI tool for organizing books and PDFs with AI-powered metadata generation.</description>
+    <tags>pdf books library metadata cli organizer</tags>
+    <dependencies>
+      <dependency id="python3" version="3.11" />
+    </dependencies>
+  </metadata>
+</package>

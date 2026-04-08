@@ -1,14 +1,35 @@
 [project]
-name = "wst"
+name = "wst-library"
 version = "0.1.0"
 description = "CLI tool for organizing books and PDFs with AI-powered metadata"
+readme = "README.md"
+license = "LicenseRef-Proprietary"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
+authors = [{name = "cnexans"}]
+keywords = ["pdf", "books", "library", "metadata", "cli", "organizer"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Utilities",
+]
 dependencies = [
     "click>=8.0",
     "pymupdf>=1.24",
     "pydantic>=2.0",
     "InquirerPy>=0.3",
 ]
+
+[project.urls]
+Homepage = "https://github.com/cnexans/wst"
+Repository = "https://github.com/cnexans/wst"
+Issues = "https://github.com/cnexans/wst/issues"
 
 [project.scripts]
 wst = "wst.cli:cli"
