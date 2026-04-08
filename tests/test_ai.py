@@ -24,6 +24,7 @@ class TestClaudeCLIBackend:
             existing_meta={"title": "Test", "author": "Author"},
             text_sample="Chapter 1: Introduction\nThis book covers...",
             filename="test-book.pdf",
+            schema='{"type": "object"}',
         )
         assert "test-book.pdf" in prompt
         assert "Test" in prompt
@@ -33,7 +34,7 @@ class TestClaudeCLIBackend:
     def test_build_prompt_truncates_long_text(self):
         backend = ClaudeCLIBackend()
         long_text = "x" * 20000
-        prompt = backend._build_prompt({}, long_text, "file.pdf")
+        prompt = backend._build_prompt({}, long_text, "file.pdf", schema="{}")
         assert "[...truncated]" in prompt
         assert len(prompt) < 25000
 
@@ -43,5 +44,19 @@ class TestClaudeCLIBackend:
             existing_meta={"title": "", "author": None, "subject": "Math"},
             text_sample="text",
             filename="f.pdf",
+            schema="{}",
         )
         assert "Math" in prompt
+
+    def test_extract_json_raw(self):
+        data = ClaudeCLIBackend._extract_json('{"title": "Test"}')
+        assert data["title"] == "Test"
+
+    def test_extract_json_from_markdown(self):
+        text = 'Some text\n```json\n{"title": "Test"}\n```\nmore text'
+        data = ClaudeCLIBackend._extract_json(text)
+        assert data["title"] == "Test"
+
+    def test_extract_json_invalid_raises(self):
+        with pytest.raises(ValueError, match="Could not extract JSON"):
+            ClaudeCLIBackend._extract_json("no json here")
