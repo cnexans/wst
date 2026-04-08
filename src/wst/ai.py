@@ -31,11 +31,14 @@ class ClaudeCLIBackend(AIBackend):
                 self.model,
                 "--output-format",
                 "json",
+                "--allowedTools",
+                "WebSearch",
+                "WebFetch",
             ],
             input=prompt,
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=180,
         )
 
         if result.returncode != 0:
@@ -91,7 +94,10 @@ No explanation, no markdown, just the raw JSON.
 - table_of_contents: chapter titles if visible, otherwise null
 - subject: broad knowledge area (e.g. "Mathematics", "Computer Science")
 - Use null for fields that cannot be determined
-- Always provide title and author — infer from content if needed"""
+- Always provide title and author — infer from content if needed
+- IMPORTANT: If year, publisher, or ISBN are missing from the PDF text,
+  use web search to find the correct publication year, publisher, and ISBN.
+  Search for the book title and author to find this information."""
 
 
 def get_ai_backend(name: str, model: str = "sonnet") -> AIBackend:
