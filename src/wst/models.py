@@ -15,14 +15,14 @@ class DocType(StrEnum):
 
 
 DOCTYPE_FOLDER: dict[DocType, str] = {
-    DocType.BOOK: "libros",
-    DocType.NOVEL: "libros",
-    DocType.TEXTBOOK: "libros",
+    DocType.BOOK: "books",
+    DocType.NOVEL: "books",
+    DocType.TEXTBOOK: "books",
     DocType.PAPER: "papers",
-    DocType.CLASS_NOTES: "notas",
-    DocType.EXERCISES: "ejercicios",
-    DocType.GUIDE_THEORY: "guias",
-    DocType.GUIDE_PRACTICE: "guias",
+    DocType.CLASS_NOTES: "notes",
+    DocType.EXERCISES: "exercises",
+    DocType.GUIDE_THEORY: "guides",
+    DocType.GUIDE_PRACTICE: "guides",
 }
 
 

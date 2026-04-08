@@ -10,14 +10,14 @@ class TestDocType:
             assert dt in DOCTYPE_FOLDER
 
     def test_folder_values(self):
-        assert DOCTYPE_FOLDER[DocType.BOOK] == "libros"
-        assert DOCTYPE_FOLDER[DocType.NOVEL] == "libros"
-        assert DOCTYPE_FOLDER[DocType.TEXTBOOK] == "libros"
+        assert DOCTYPE_FOLDER[DocType.BOOK] == "books"
+        assert DOCTYPE_FOLDER[DocType.NOVEL] == "books"
+        assert DOCTYPE_FOLDER[DocType.TEXTBOOK] == "books"
         assert DOCTYPE_FOLDER[DocType.PAPER] == "papers"
-        assert DOCTYPE_FOLDER[DocType.CLASS_NOTES] == "notas"
-        assert DOCTYPE_FOLDER[DocType.EXERCISES] == "ejercicios"
-        assert DOCTYPE_FOLDER[DocType.GUIDE_THEORY] == "guias"
-        assert DOCTYPE_FOLDER[DocType.GUIDE_PRACTICE] == "guias"
+        assert DOCTYPE_FOLDER[DocType.CLASS_NOTES] == "notes"
+        assert DOCTYPE_FOLDER[DocType.EXERCISES] == "exercises"
+        assert DOCTYPE_FOLDER[DocType.GUIDE_THEORY] == "guides"
+        assert DOCTYPE_FOLDER[DocType.GUIDE_PRACTICE] == "guides"
 
 
 class TestDocumentMetadata:
@@ -67,7 +67,7 @@ class TestLibraryEntry:
             metadata=meta,
             filename="A - T.pdf",
             original_filename="file.pdf",
-            file_path="libros/A - T.pdf",
+            file_path="books/A - T.pdf",
             file_hash="abc123",
             ingested_at="2026-01-01T00:00:00Z",
         )

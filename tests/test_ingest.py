@@ -36,7 +36,7 @@ class TestFormatMetadataDisplay:
             metadata=meta,
             filename="Author - Test Book (2024).pdf",
             original_filename="test.pdf",
-            file_path="libros/Author - Test Book (2024).pdf",
+            file_path="books/Author - Test Book (2024).pdf",
             file_hash="abc",
             ingested_at="2026-01-01T00:00:00Z",
         )
@@ -45,7 +45,7 @@ class TestFormatMetadataDisplay:
         assert "Author" in output
         assert "2024" in output
         assert "python, testing" in output
-        assert "libros/" in output
+        assert "books/" in output
 
     def test_display_with_optional_fields(self):
         meta = DocumentMetadata(

@@ -26,7 +26,7 @@ class TestBuildDestPath:
         meta = DocumentMetadata(
             title="Clean Code", author="Robert Martin", doc_type=DocType.BOOK, year=2008
         )
-        assert build_dest_path(meta) == "libros/Robert Martin - Clean Code (2008).pdf"
+        assert build_dest_path(meta) == "books/Robert Martin - Clean Code (2008).pdf"
 
     def test_paper_without_year(self):
         meta = DocumentMetadata(
@@ -38,7 +38,7 @@ class TestBuildDestPath:
         meta = DocumentMetadata(
             title="Lecture 5", author="Prof Smith", doc_type=DocType.CLASS_NOTES, year=2024
         )
-        assert build_dest_path(meta) == "notas/Prof Smith - Lecture 5 (2024).pdf"
+        assert build_dest_path(meta) == "notes/Prof Smith - Lecture 5 (2024).pdf"
 
     def test_sanitizes_special_chars(self):
         meta = DocumentMetadata(title="What is C++?", author="Author", doc_type=DocType.BOOK)
@@ -54,9 +54,9 @@ class TestLocalStorage:
         source = tmp_path / "test.pdf"
         source.write_text("content")
 
-        result = storage.store(source, "libros/test.pdf")
-        assert result == "libros/test.pdf"
-        assert (library / "libros" / "test.pdf").exists()
+        result = storage.store(source, "books/test.pdf")
+        assert result == "books/test.pdf"
+        assert (library / "books" / "test.pdf").exists()
         # Source should still exist (copy, not move)
         assert source.exists()
 
@@ -67,33 +67,33 @@ class TestLocalStorage:
         # Create first file
         src1 = tmp_path / "a.pdf"
         src1.write_text("first")
-        storage.store(src1, "libros/test.pdf")
+        storage.store(src1, "books/test.pdf")
 
         # Store second with same dest
         src2 = tmp_path / "b.pdf"
         src2.write_text("second")
-        result = storage.store(src2, "libros/test.pdf")
-        assert result == "libros/test (1).pdf"
-        assert (library / "libros" / "test (1).pdf").exists()
+        result = storage.store(src2, "books/test.pdf")
+        assert result == "books/test (1).pdf"
+        assert (library / "books" / "test (1).pdf").exists()
 
     def test_exists(self, tmp_path):
         library = tmp_path / "library"
         storage = LocalStorage(library)
 
-        assert not storage.exists("libros/test.pdf")
-        (library / "libros").mkdir(parents=True)
-        (library / "libros" / "test.pdf").write_text("x")
-        assert storage.exists("libros/test.pdf")
+        assert not storage.exists("books/test.pdf")
+        (library / "books").mkdir(parents=True)
+        (library / "books" / "test.pdf").write_text("x")
+        assert storage.exists("books/test.pdf")
 
     def test_list_files(self, tmp_path):
         library = tmp_path / "library"
-        (library / "libros").mkdir(parents=True)
-        (library / "libros" / "a.pdf").write_text("x")
-        (library / "libros" / "b.pdf").write_text("x")
-        (library / "libros" / "c.txt").write_text("x")  # not a PDF
+        (library / "books").mkdir(parents=True)
+        (library / "books" / "a.pdf").write_text("x")
+        (library / "books" / "b.pdf").write_text("x")
+        (library / "books" / "c.txt").write_text("x")  # not a PDF
 
         storage = LocalStorage(library)
-        files = storage.list_files("libros")
+        files = storage.list_files("books")
         assert len(files) == 2
         assert all(f.endswith(".pdf") for f in files)
 
@@ -113,10 +113,10 @@ class TestCompositeStorage:
         source = tmp_path / "test.pdf"
         source.write_text("content")
 
-        result = composite.store(source, "libros/test.pdf")
-        assert result == "libros/test.pdf"
-        assert (primary_root / "libros" / "test.pdf").exists()
-        assert (backup_root / "libros" / "test.pdf").exists()
+        result = composite.store(source, "books/test.pdf")
+        assert result == "books/test.pdf"
+        assert (primary_root / "books" / "test.pdf").exists()
+        assert (backup_root / "books" / "test.pdf").exists()
 
     def test_exists_checks_primary_only(self, tmp_path):
         primary = LocalStorage(tmp_path / "primary")
@@ -124,15 +124,15 @@ class TestCompositeStorage:
         composite = CompositeStorage(primary, backups=[backup])
 
         # File only in backup
-        (tmp_path / "backup" / "libros").mkdir(parents=True)
-        (tmp_path / "backup" / "libros" / "test.pdf").write_text("x")
-        assert not composite.exists("libros/test.pdf")
+        (tmp_path / "backup" / "books").mkdir(parents=True)
+        (tmp_path / "backup" / "books" / "test.pdf").write_text("x")
+        assert not composite.exists("books/test.pdf")
 
     def test_list_files_from_primary(self, tmp_path):
         primary_root = tmp_path / "primary"
-        (primary_root / "libros").mkdir(parents=True)
-        (primary_root / "libros" / "a.pdf").write_text("x")
+        (primary_root / "books").mkdir(parents=True)
+        (primary_root / "books" / "a.pdf").write_text("x")
 
         primary = LocalStorage(primary_root)
         composite = CompositeStorage(primary)
-        assert len(composite.list_files("libros")) == 1
+        assert len(composite.list_files("books")) == 1

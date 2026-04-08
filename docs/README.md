@@ -62,11 +62,11 @@ Wraps `DocumentMetadata` with storage and tracking fields: `id`, `filename`, `or
 
 | DocType | Folder |
 |---------|--------|
-| book, novel, textbook | `libros/` |
+| book, novel, textbook | `books/` |
 | paper | `papers/` |
-| class-notes | `notas/` |
-| exercises | `ejercicios/` |
-| guide-theory, guide-practice | `guias/` |
+| class-notes | `notes/` |
+| exercises | `exercises/` |
+| guide-theory, guide-practice | `guides/` |
 
 ## Backend Abstractions
 

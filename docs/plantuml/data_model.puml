@@ -42,14 +42,14 @@ LibraryEntry *-- DocumentMetadata
 DocumentMetadata --> DocType
 
 map DOCTYPE_FOLDER {
-    book => libros/
-    novel => libros/
-    textbook => libros/
+    book => books/
+    novel => books/
+    textbook => books/
     paper => papers/
-    class-notes => notas/
-    exercises => ejercicios/
-    guide-theory => guias/
-    guide-practice => guias/
+    class-notes => notes/
+    exercises => exercises/
+    guide-theory => guides/
+    guide-practice => guides/
 }
 
 DocType ..> DOCTYPE_FOLDER

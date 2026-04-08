@@ -19,7 +19,7 @@ Named after **Wan Shi Tong**, the ancient spirit who collected every piece of kn
 ## Features
 
 - **AI-powered metadata**: Automatically extracts and completes metadata (title, author, type, year, summary, tags, etc.) using Claude CLI
-- **Organized library**: Files sorted by type (`libros/`, `papers/`, `notas/`, `ejercicios/`, `guias/`) with consistent naming (`Author - Title (Year).pdf`)
+- **Organized library**: Files sorted by type (`books/`, `papers/`, `notes/`, `exercises/`, `guides/`) with consistent naming (`Author - Title (Year).pdf`)
 - **SQLite search index**: Full-text search across title, author, tags, subject, and summary via FTS5
 - **Extensible backends**: Abstract layers for AI (Claude CLI, future API/SDK) and storage (local filesystem, future S3)
 
@@ -80,11 +80,11 @@ wst show "Design Patterns"
 
 ```
 library/
-├── libros/          # book, novel, textbook
+├── books/           # book, novel, textbook
 ├── papers/          # paper
-├── notas/           # class-notes
-├── ejercicios/      # exercises
-├── guias/           # guide-theory, guide-practice
+├── notes/           # class-notes
+├── exercises/       # exercises
+├── guides/          # guide-theory, guide-practice
 └── wst.db           # SQLite index
 ```
 
