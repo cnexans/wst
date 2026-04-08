@@ -1,3 +1,4 @@
+import platform
 import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -7,7 +8,23 @@ from InquirerPy import inquirer
 from wst.db import Database
 from wst.models import LibraryEntry
 
-ICLOUD_BASE = Path.home() / "Library" / "Mobile Documents" / "com~apple~CloudDocs"
+
+def _detect_icloud_base() -> Path | None:
+    """Detect iCloud Drive path based on OS."""
+    system = platform.system()
+    if system == "Darwin":
+        p = Path.home() / "Library" / "Mobile Documents" / "com~apple~CloudDocs"
+        return p if p.exists() else p
+    if system == "Windows":
+        # Standard iCloud for Windows path
+        p = Path.home() / "iCloudDrive"
+        if p.exists():
+            return p
+        # Alternative: installed via Microsoft Store
+        p = Path(f"C:/Users/{Path.home().name}/iCloudDrive")
+        if p.exists():
+            return p
+    return None
 
 
 class BackupProvider(ABC):
@@ -37,15 +54,23 @@ class ICloudProvider(BackupProvider):
 
     def __init__(self, subfolder: str = "wst"):
         self.subfolder = subfolder
-        self.dest_root = ICLOUD_BASE / subfolder
+        self.icloud_base = _detect_icloud_base()
+        self.dest_root = self.icloud_base / subfolder if self.icloud_base else Path()
 
     def is_configured(self) -> bool:
-        return ICLOUD_BASE.exists()
+        return self.icloud_base is not None and self.icloud_base.exists()
 
     def configure(self) -> None:
-        if not ICLOUD_BASE.exists():
-            print(f"iCloud Drive not found at {ICLOUD_BASE}")
-            print("Make sure iCloud Drive is enabled in System Settings > Apple ID > iCloud.")
+        if not self.is_configured():
+            system = platform.system()
+            if system == "Darwin":
+                print("iCloud Drive not found.")
+                print("Enable it in System Settings > Apple ID > iCloud.")
+            elif system == "Windows":
+                print("iCloud Drive not found.")
+                print("Install iCloud for Windows from the Microsoft Store.")
+            else:
+                print(f"iCloud Drive is not supported on {system}.")
             return
 
         subfolder = (
@@ -58,7 +83,7 @@ class ICloudProvider(BackupProvider):
         )
 
         self.subfolder = subfolder
-        self.dest_root = ICLOUD_BASE / subfolder
+        self.dest_root = self.icloud_base / subfolder
         self.dest_root.mkdir(parents=True, exist_ok=True)
         print(f"Configured: {self.dest_root}")
 
