@@ -39,6 +39,7 @@ jobs:
   chocolatey:
     needs: test
     runs-on: windows-latest
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with:
@@ -53,4 +54,4 @@ jobs:
         run: |
           cd packaging/chocolatey
           choco pack
-          choco push --source https://push.chocolatey.org/ --api-key ${{ secrets.CHOCOLATEY_API_KEY }}
+          choco push --source https://push.chocolatey.org/ --api-key ${{ secrets.CHOCOLATEY_API_KEY }} --verbose
