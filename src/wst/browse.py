@@ -1,3 +1,5 @@
+import platform
+import subprocess
 from pathlib import Path
 
 from InquirerPy import inquirer
@@ -62,16 +64,77 @@ def _document_actions(
     action = inquirer.select(
         message="Action:",
         choices=[
+            {"name": "View metadata", "value": "view"},
+            {"name": "Open file", "value": "open"},
+            {"name": "Show in folder", "value": "find"},
             {"name": "Edit metadata", "value": "edit"},
             {"name": "Delete", "value": "delete"},
             {"name": "Back", "value": "back"},
         ],
     ).execute()
 
-    if action == "edit":
+    if action == "view":
+        _view_document(entry)
+    elif action == "open":
+        _open_file(entry, library_path)
+    elif action == "find":
+        _reveal_in_folder(entry, library_path)
+    elif action == "edit":
         _edit_document(entry, db, storage, library_path)
     elif action == "delete":
         _delete_document(entry, db, library_path)
+
+
+def _view_document(entry: LibraryEntry) -> None:
+    """Display full metadata for a document."""
+    m = entry.metadata
+    print(f"\n  Title:         {m.title}")
+    print(f"  Author:        {m.author}")
+    print(f"  Type:          {m.doc_type.value}")
+    print(f"  Year:          {m.year or 'N/A'}")
+    print(f"  Publisher:     {m.publisher or 'N/A'}")
+    print(f"  ISBN:          {m.isbn or 'N/A'}")
+    print(f"  Language:      {m.language or 'N/A'}")
+    print(f"  Pages:         {m.page_count or 'N/A'}")
+    print(f"  Subject:       {m.subject or 'N/A'}")
+    print(f"  Tags:          {', '.join(m.tags) if m.tags else 'N/A'}")
+    print(f"  Summary:       {m.summary or 'N/A'}")
+    print(f"  File:          {entry.file_path}")
+    print(f"  Original file: {entry.original_filename}")
+    print(f"  Ingested at:   {entry.ingested_at}")
+    print()
+
+
+def _open_file(entry: LibraryEntry, library_path: Path) -> None:
+    """Open the document with the system default application."""
+    file_path = library_path / entry.file_path
+    if not file_path.exists():
+        print(f"  File not found: {file_path}\n")
+        return
+    system = platform.system()
+    if system == "Darwin":
+        subprocess.Popen(["open", str(file_path)])
+    elif system == "Windows":
+        subprocess.Popen(["cmd", "/c", "start", "", str(file_path)])
+    else:
+        subprocess.Popen(["xdg-open", str(file_path)])
+    print(f"  Opened: {entry.file_path}\n")
+
+
+def _reveal_in_folder(entry: LibraryEntry, library_path: Path) -> None:
+    """Reveal the document in Finder (macOS) or Explorer (Windows)."""
+    file_path = library_path / entry.file_path
+    if not file_path.exists():
+        print(f"  File not found: {file_path}\n")
+        return
+    system = platform.system()
+    if system == "Darwin":
+        subprocess.Popen(["open", "-R", str(file_path)])
+    elif system == "Windows":
+        subprocess.Popen(["explorer", "/select,", str(file_path)])
+    else:
+        subprocess.Popen(["xdg-open", str(file_path.parent)])
+    print(f"  Revealed: {entry.file_path}\n")
 
 
 def _delete_document(entry: LibraryEntry, db: Database, library_path: Path) -> None:
