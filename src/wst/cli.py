@@ -26,6 +26,12 @@ def cli(ctx: click.Context) -> None:
 @click.option("--reprocess", "-r", is_flag=True, help="Re-ingest duplicates with fresh AI metadata")
 @click.option("--keep-inbox", is_flag=True, help="Don't clean inbox after processing")
 @click.option("--verbose", "-v", is_flag=True, help="Show detailed per-file processing logs")
+@click.option("--ocr", is_flag=True, help="Auto-OCR scanned PDFs before processing")
+@click.option(
+    "--ocr-language",
+    default="spa",
+    help="OCR language code (default: spa)",
+)
 @click.pass_context
 def ingest(
     ctx: click.Context,
@@ -34,6 +40,8 @@ def ingest(
     reprocess: bool,
     keep_inbox: bool,
     verbose: bool,
+    ocr: bool,
+    ocr_language: str,
 ) -> None:
     """Ingest PDFs into the library.
 
@@ -49,6 +57,7 @@ def ingest(
         wst ingest ~/Documents/papers/    # ingest a whole folder
         wst ingest --keep-inbox           # process inbox without cleaning
         wst ingest -v                     # verbose per-file output
+        wst ingest --ocr                  # OCR scanned PDFs before ingesting
     """
     config: WstConfig = ctx.obj["config"]
     config.ensure_dirs()
@@ -64,35 +73,43 @@ def ingest(
                 click.echo("No supported files found at the given path.")
                 return
             click.echo(f"Copied {len(copied_files)} file(s) to inbox.")
-            ingest_files(
-                copied_files,
-                ai,
-                storage,
-                db,
-                auto_confirm=not confirm,
-                reprocess=reprocess,
-                verbose=verbose,
-            )
+            files_to_process = copied_files
         else:
             if not config.inbox_path.exists() or not any(
                 p for p in config.inbox_path.rglob("*") if is_supported(p)
             ):
                 click.echo(f"No supported files in inbox ({config.inbox_path}).")
                 return
-            docs = _find_documents(config.inbox_path)
-            ingest_files(
-                docs,
-                ai,
-                storage,
-                db,
-                auto_confirm=not confirm,
-                reprocess=reprocess,
-                verbose=verbose,
-            )
-            if not keep_inbox:
-                removed = clean_inbox(config.inbox_path)
-                if removed > 0:
-                    click.echo(f"Cleaned inbox: removed {removed} remaining file(s).")
+            files_to_process = _find_documents(config.inbox_path)
+
+        if ocr:
+            from wst.ocr import ocr_files as run_ocr_batch
+
+            pdfs = [f for f in files_to_process if f.suffix.lower() == ".pdf"]
+            if pdfs:
+                click.echo("\n--- OCR pass ---")
+                run_ocr_batch(
+                    pdfs,
+                    language=ocr_language,
+                    verbose=verbose,
+                )
+                click.echo("")
+
+        click.echo("--- Ingest pass ---")
+        ingest_files(
+            files_to_process,
+            ai,
+            storage,
+            db,
+            auto_confirm=not confirm,
+            reprocess=reprocess,
+            verbose=verbose,
+        )
+
+        if path is None and not keep_inbox:
+            removed = clean_inbox(config.inbox_path)
+            if removed > 0:
+                click.echo(f"Cleaned inbox: removed {removed} remaining file(s).")
     finally:
         db.close()
 
@@ -159,6 +176,64 @@ def browse(ctx: click.Context) -> None:
         browse_library(db, storage, config.library_path)
     finally:
         db.close()
+
+
+@cli.command()
+@click.argument(
+    "path",
+    type=click.Path(exists=True, path_type=Path),
+)
+@click.option(
+    "--language",
+    "-l",
+    default="spa",
+    help="OCR language code (default: spa). Use + for multiple: spa+eng",
+)
+@click.option(
+    "--force",
+    "-f",
+    is_flag=True,
+    help="Force OCR even if the PDF already has extractable text",
+)
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    help="Show detailed per-file processing logs",
+)
+def ocr(path: Path, language: str, force: bool, verbose: bool) -> None:
+    """Run OCR on scanned PDFs to make them searchable.
+
+    \b
+    Adds an invisible text layer to scanned PDFs using ocrmypdf.
+    Skips PDFs that already have extractable text (use --force to override).
+    Requires ocrmypdf: pipx install ocrmypdf
+
+    \b
+    Examples:
+        wst ocr scan.pdf                # OCR a single file
+        wst ocr ~/scans/                # OCR all PDFs in a folder
+        wst ocr scan.pdf -l eng         # OCR in English
+        wst ocr scan.pdf -l spa+eng     # OCR in Spanish and English
+        wst ocr scan.pdf --force        # Force OCR even if text exists
+    """
+    from wst.ocr import ocr_files as run_ocr_batch
+
+    if path.is_file():
+        if path.suffix.lower() != ".pdf":
+            click.echo("Only PDF files can be OCR'd.")
+            return
+        files = [path]
+    elif path.is_dir():
+        files = sorted(p for p in path.rglob("*") if p.is_file() and p.suffix.lower() == ".pdf")
+        if not files:
+            click.echo("No PDF files found in the given directory.")
+            return
+    else:
+        click.echo("Path must be a file or directory.")
+        return
+
+    run_ocr_batch(files, language=language, force=force, verbose=verbose)
 
 
 def _copy_to_inbox(source: Path, inbox: Path) -> list[Path]:
