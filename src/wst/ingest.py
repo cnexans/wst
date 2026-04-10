@@ -1,4 +1,6 @@
 import hashlib
+import time
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -9,6 +11,14 @@ from wst.db import Database
 from wst.document import SUPPORTED_EXTENSIONS, extract_doc_info, is_supported, write_doc_metadata
 from wst.models import LibraryEntry
 from wst.storage import StorageBackend, build_dest_path
+
+
+@dataclass
+class IngestResult:
+    filename: str
+    status: str  # "ingested", "skipped", "failed"
+    reason: str = ""
+    dest_path: str = ""
 
 
 def compute_file_hash(path: Path) -> str:
@@ -40,6 +50,35 @@ def format_metadata_display(entry: LibraryEntry) -> str:
     return "\n".join(lines)
 
 
+def _format_eta(seconds: float) -> str:
+    if seconds < 60:
+        return f"{int(seconds)}s"
+    minutes = int(seconds) // 60
+    secs = int(seconds) % 60
+    if minutes < 60:
+        return f"{minutes}m {secs:02d}s"
+    hours = minutes // 60
+    minutes = minutes % 60
+    return f"{hours}h {minutes:02d}m"
+
+
+def _clear_line() -> None:
+    click.echo("\r" + " " * 80 + "\r", nl=False)
+
+
+def _show_progress(current: int, total: int, filename: str, elapsed: float) -> None:
+    pct = (current / total) * 100
+    if current > 0:
+        avg = elapsed / current
+        remaining = avg * (total - current)
+        eta = f"ETA: {_format_eta(remaining)}"
+    else:
+        eta = "ETA: --"
+    name = filename[:30] + ".." if len(filename) > 32 else filename
+    line = f"[{pct:3.0f}%] {current}/{total} | {eta} | {name}"
+    click.echo("\r" + line.ljust(80), nl=False)
+
+
 def ingest_file(
     path: Path,
     ai: AIBackend,
@@ -47,34 +86,40 @@ def ingest_file(
     db: Database,
     auto_confirm: bool = False,
     reprocess: bool = False,
-) -> bool:
-    """Ingest a single document file. Returns True if successfully ingested."""
-    click.echo(f"\nProcessing: {path.name}")
+    verbose: bool = False,
+) -> IngestResult:
+    """Ingest a single document file. Returns an IngestResult."""
+    if verbose:
+        click.echo(f"\nProcessing: {path.name}")
 
     # Check for duplicates
     file_hash = compute_file_hash(path)
     if db.exists_hash(file_hash):
         if not reprocess:
-            click.echo(f"  Skipped (duplicate): {path.name}")
-            return False
+            if verbose:
+                click.echo(f"  Skipped (duplicate): {path.name}")
+            return IngestResult(path.name, "skipped", "duplicate")
         old_path = db.delete_by_hash(file_hash)
-        if old_path:
+        if old_path and verbose:
             click.echo(f"  Reprocessing (replacing: {old_path})")
 
     # Extract document info
     try:
         existing_meta, text_sample, page_count = extract_doc_info(path)
     except Exception as e:
-        click.echo(f"  Error reading file: {e}")
-        return False
+        if verbose:
+            click.echo(f"  Error reading file: {e}")
+        return IngestResult(path.name, "failed", f"Error reading file: {e}")
 
     # Generate metadata via AI
-    click.echo("  Generating metadata...")
+    if verbose:
+        click.echo("  Generating metadata...")
     try:
         metadata = ai.generate_metadata(existing_meta, text_sample, path.name)
     except Exception as e:
-        click.echo(f"  Error generating metadata: {e}")
-        return False
+        if verbose:
+            click.echo(f"  Error generating metadata: {e}")
+        return IngestResult(path.name, "failed", f"Error generating metadata: {e}")
 
     metadata.page_count = page_count
 
@@ -91,18 +136,21 @@ def ingest_file(
     )
 
     # Show metadata and confirm
-    click.echo(format_metadata_display(entry))
+    if verbose or not auto_confirm:
+        click.echo(format_metadata_display(entry))
 
     if not auto_confirm:
         if not click.confirm("  Accept and ingest?", default=True):
-            click.echo("  Skipped.")
-            return False
+            if verbose:
+                click.echo("  Skipped.")
+            return IngestResult(path.name, "skipped", "declined by user")
 
     # Write metadata (PDF only)
     try:
         write_doc_metadata(path, metadata.title, metadata.author, metadata.subject)
     except Exception as e:
-        click.echo(f"  Warning: could not write metadata: {e}")
+        if verbose:
+            click.echo(f"  Warning: could not write metadata: {e}")
 
     # Store file (copy to all backends, then remove original)
     final_path = storage.store(path, dest_path)
@@ -111,8 +159,9 @@ def ingest_file(
 
     # Index in DB
     entry.id = db.insert(entry)
-    click.echo(f"  Ingested -> {final_path}")
-    return True
+    if verbose:
+        click.echo(f"  Ingested -> {final_path}")
+    return IngestResult(path.name, "ingested", dest_path=final_path)
 
 
 def _find_documents(inbox_path: Path) -> list[Path]:
@@ -120,30 +169,73 @@ def _find_documents(inbox_path: Path) -> list[Path]:
     return sorted(p for p in inbox_path.rglob("*") if p.is_file() and is_supported(p))
 
 
-def ingest_inbox(
-    inbox_path: Path,
+def ingest_files(
+    files: list[Path],
     ai: AIBackend,
     storage: StorageBackend,
     db: Database,
     auto_confirm: bool = False,
     reprocess: bool = False,
+    verbose: bool = False,
 ) -> tuple[int, int]:
-    """Ingest all documents from inbox recursively. Returns (processed, ingested) counts."""
-    docs = _find_documents(inbox_path)
-    if not docs:
-        click.echo("No supported files found in inbox.")
+    """Ingest a list of document files. Returns (processed, ingested) counts."""
+    if not files:
+        click.echo("No supported files found.")
         return 0, 0
 
-    exts = ", ".join(sorted(SUPPORTED_EXTENSIONS))
-    click.echo(f"Found {len(docs)} file(s) in {inbox_path} ({exts})")
-    processed = 0
-    ingested = 0
+    total = len(files)
+    click.echo(f"Found {total} file(s)")
 
-    for doc_path in docs:
-        processed += 1
-        click.echo(f"\n[{processed}/{len(docs)}]")
-        if ingest_file(doc_path, ai, storage, db, auto_confirm, reprocess):
-            ingested += 1
+    results: list[IngestResult] = []
+    start_time = time.monotonic()
 
-    click.echo(f"\nDone: {ingested}/{processed} files ingested.")
-    return processed, ingested
+    for i, doc_path in enumerate(files):
+        elapsed = time.monotonic() - start_time
+
+        if not verbose:
+            _show_progress(i, total, doc_path.name, elapsed)
+
+        if not verbose and not auto_confirm:
+            # Need to clear progress line before interactive prompt
+            _clear_line()
+
+        result = ingest_file(doc_path, ai, storage, db, auto_confirm, reprocess, verbose)
+        results.append(result)
+
+    # Clear progress line
+    if not verbose:
+        _clear_line()
+
+    # Summary
+    ingested = [r for r in results if r.status == "ingested"]
+    failed = [r for r in results if r.status == "failed"]
+    skipped = [r for r in results if r.status == "skipped"]
+
+    elapsed = time.monotonic() - start_time
+    click.echo(f"\nDone in {_format_eta(elapsed)}: {len(ingested)} ingested, {len(skipped)} skipped, {len(failed)} failed")
+
+    if failed:
+        click.echo("\nFailed:")
+        for r in failed:
+            click.echo(f"  - {r.filename}: {r.reason}")
+
+    if skipped and verbose:
+        click.echo("\nSkipped:")
+        for r in skipped:
+            click.echo(f"  - {r.filename}: {r.reason}")
+
+    return total, len(ingested)
+
+
+def clean_inbox(inbox_path: Path) -> int:
+    """Remove all remaining files from inbox. Returns count of files removed."""
+    removed = 0
+    for p in inbox_path.rglob("*"):
+        if p.is_file():
+            p.unlink()
+            removed += 1
+    # Remove empty subdirectories
+    for p in sorted(inbox_path.rglob("*"), reverse=True):
+        if p.is_dir() and not any(p.iterdir()):
+            p.rmdir()
+    return removed

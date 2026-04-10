@@ -7,7 +7,7 @@ from wst.ai import get_ai_backend
 from wst.config import WstConfig
 from wst.db import Database
 from wst.document import is_supported
-from wst.ingest import ingest_inbox
+from wst.ingest import _find_documents, clean_inbox, ingest_files
 from wst.models import DocType, LibraryEntry
 from wst.storage import LocalStorage, build_dest_path
 
@@ -24,50 +24,52 @@ def cli(ctx: click.Context) -> None:
 @click.argument("path", type=click.Path(exists=True, path_type=Path), required=False, default=None)
 @click.option("--confirm", "-c", is_flag=True, help="Manually confirm metadata for each file")
 @click.option("--reprocess", "-r", is_flag=True, help="Re-ingest duplicates with fresh AI metadata")
+@click.option("--keep-inbox", is_flag=True, help="Don't clean inbox after processing")
+@click.option("--verbose", "-v", is_flag=True, help="Show detailed per-file processing logs")
 @click.pass_context
-def ingest(ctx: click.Context, path: Path | None, confirm: bool, reprocess: bool) -> None:
+def ingest(ctx: click.Context, path: Path | None, confirm: bool, reprocess: bool, keep_inbox: bool, verbose: bool) -> None:
     """Ingest PDFs into the library.
 
     \b
-    Without arguments, processes all PDFs in ~/wst/inbox/.
-    With a PATH argument (file or directory), copies PDFs to the inbox first,
-    then processes them.
+    Without arguments, processes all files in ~/wst/inbox/ and cleans it afterwards.
+    With a PATH argument (file or directory), ingests only those files
+    (copies them to inbox for processing, without touching other inbox files).
 
     \b
     Examples:
-        wst ingest                        # process inbox
+        wst ingest                        # process and clean inbox
         wst ingest ~/Downloads/book.pdf   # ingest a single file
         wst ingest ~/Documents/papers/    # ingest a whole folder
+        wst ingest --keep-inbox           # process inbox without cleaning
+        wst ingest -v                     # verbose per-file output
     """
     config: WstConfig = ctx.obj["config"]
     config.ensure_dirs()
-
-    if path is not None:
-        copied = _copy_to_inbox(path, config.inbox_path)
-        if copied == 0:
-            click.echo("No PDF files found at the given path.")
-            return
-        click.echo(f"Copied {copied} file(s) to inbox.")
-
-    if not config.inbox_path.exists() or not any(
-        p for p in config.inbox_path.rglob("*") if is_supported(p)
-    ):
-        click.echo(f"No supported files in inbox ({config.inbox_path}).")
-        return
 
     ai = get_ai_backend(config.ai_backend, config.ai_model)
     storage = LocalStorage(config.library_path)
     db = Database(config.db_path)
 
     try:
-        ingest_inbox(
-            config.inbox_path,
-            ai,
-            storage,
-            db,
-            auto_confirm=not confirm,
-            reprocess=reprocess,
-        )
+        if path is not None:
+            copied_files = _copy_to_inbox(path, config.inbox_path)
+            if not copied_files:
+                click.echo("No supported files found at the given path.")
+                return
+            click.echo(f"Copied {len(copied_files)} file(s) to inbox.")
+            ingest_files(copied_files, ai, storage, db, auto_confirm=not confirm, reprocess=reprocess, verbose=verbose)
+        else:
+            if not config.inbox_path.exists() or not any(
+                p for p in config.inbox_path.rglob("*") if is_supported(p)
+            ):
+                click.echo(f"No supported files in inbox ({config.inbox_path}).")
+                return
+            docs = _find_documents(config.inbox_path)
+            ingest_files(docs, ai, storage, db, auto_confirm=not confirm, reprocess=reprocess, verbose=verbose)
+            if not keep_inbox:
+                removed = clean_inbox(config.inbox_path)
+                if removed > 0:
+                    click.echo(f"Cleaned inbox: removed {removed} remaining file(s).")
     finally:
         db.close()
 
@@ -136,10 +138,10 @@ def browse(ctx: click.Context) -> None:
         db.close()
 
 
-def _copy_to_inbox(source: Path, inbox: Path) -> int:
-    """Copy supported files from source to inbox. Returns count of files copied."""
+def _copy_to_inbox(source: Path, inbox: Path) -> list[Path]:
+    """Copy supported files from source to inbox. Returns list of copied file paths in inbox."""
     inbox.mkdir(parents=True, exist_ok=True)
-    count = 0
+    copied: list[Path] = []
     files = []
     if source.is_file():
         if is_supported(source):
@@ -156,8 +158,8 @@ def _copy_to_inbox(source: Path, inbox: Path) -> int:
                 dest = inbox / f"{stem} ({counter}){suffix}"
                 counter += 1
         shutil.copy2(str(pdf), str(dest))
-        count += 1
-    return count
+        copied.append(dest)
+    return copied
 
 
 @cli.command()

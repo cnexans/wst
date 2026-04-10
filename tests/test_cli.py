@@ -9,8 +9,9 @@ class TestCopyToInbox:
         source = tmp_path / "book.pdf"
         source.write_text("pdf content")
 
-        count = _copy_to_inbox(source, inbox)
-        assert count == 1
+        copied = _copy_to_inbox(source, inbox)
+        assert len(copied) == 1
+        assert copied[0] == inbox / "book.pdf"
         assert (inbox / "book.pdf").exists()
 
     def test_ignores_non_pdf(self, tmp_path):
@@ -18,8 +19,8 @@ class TestCopyToInbox:
         source = tmp_path / "notes.txt"
         source.write_text("text")
 
-        count = _copy_to_inbox(source, inbox)
-        assert count == 0
+        copied = _copy_to_inbox(source, inbox)
+        assert len(copied) == 0
 
     def test_copy_directory_recursive(self, tmp_path):
         inbox = tmp_path / "inbox"
@@ -29,8 +30,8 @@ class TestCopyToInbox:
         (src_dir / "sub" / "b.pdf").write_text("b")
         (src_dir / "readme.txt").write_text("ignore")
 
-        count = _copy_to_inbox(src_dir, inbox)
-        assert count == 2
+        copied = _copy_to_inbox(src_dir, inbox)
+        assert len(copied) == 2
 
     def test_handles_name_collision(self, tmp_path):
         inbox = tmp_path / "inbox"
@@ -40,8 +41,9 @@ class TestCopyToInbox:
         source = tmp_path / "book.pdf"
         source.write_text("new")
 
-        count = _copy_to_inbox(source, inbox)
-        assert count == 1
+        copied = _copy_to_inbox(source, inbox)
+        assert len(copied) == 1
+        assert copied[0] == inbox / "book (1).pdf"
         assert (inbox / "book (1).pdf").exists()
 
 
