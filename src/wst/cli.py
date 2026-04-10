@@ -27,7 +27,10 @@ def cli(ctx: click.Context) -> None:
 @click.option("--keep-inbox", is_flag=True, help="Don't clean inbox after processing")
 @click.option("--verbose", "-v", is_flag=True, help="Show detailed per-file processing logs")
 @click.pass_context
-def ingest(ctx: click.Context, path: Path | None, confirm: bool, reprocess: bool, keep_inbox: bool, verbose: bool) -> None:
+def ingest(
+    ctx: click.Context, path: Path | None, confirm: bool,
+    reprocess: bool, keep_inbox: bool, verbose: bool,
+) -> None:
     """Ingest PDFs into the library.
 
     \b
@@ -57,7 +60,10 @@ def ingest(ctx: click.Context, path: Path | None, confirm: bool, reprocess: bool
                 click.echo("No supported files found at the given path.")
                 return
             click.echo(f"Copied {len(copied_files)} file(s) to inbox.")
-            ingest_files(copied_files, ai, storage, db, auto_confirm=not confirm, reprocess=reprocess, verbose=verbose)
+            ingest_files(
+                copied_files, ai, storage, db,
+                auto_confirm=not confirm, reprocess=reprocess, verbose=verbose,
+            )
         else:
             if not config.inbox_path.exists() or not any(
                 p for p in config.inbox_path.rglob("*") if is_supported(p)
@@ -65,7 +71,10 @@ def ingest(ctx: click.Context, path: Path | None, confirm: bool, reprocess: bool
                 click.echo(f"No supported files in inbox ({config.inbox_path}).")
                 return
             docs = _find_documents(config.inbox_path)
-            ingest_files(docs, ai, storage, db, auto_confirm=not confirm, reprocess=reprocess, verbose=verbose)
+            ingest_files(
+                docs, ai, storage, db,
+                auto_confirm=not confirm, reprocess=reprocess, verbose=verbose,
+            )
             if not keep_inbox:
                 removed = clean_inbox(config.inbox_path)
                 if removed > 0:

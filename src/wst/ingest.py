@@ -8,7 +8,7 @@ import click
 
 from wst.ai import AIBackend
 from wst.db import Database
-from wst.document import SUPPORTED_EXTENSIONS, extract_doc_info, is_supported, write_doc_metadata
+from wst.document import extract_doc_info, is_supported, write_doc_metadata
 from wst.models import LibraryEntry
 from wst.storage import StorageBackend, build_dest_path
 
@@ -212,7 +212,11 @@ def ingest_files(
     skipped = [r for r in results if r.status == "skipped"]
 
     elapsed = time.monotonic() - start_time
-    click.echo(f"\nDone in {_format_eta(elapsed)}: {len(ingested)} ingested, {len(skipped)} skipped, {len(failed)} failed")
+    eta = _format_eta(elapsed)
+    click.echo(
+        f"\nDone in {eta}: "
+        f"{len(ingested)} ingested, {len(skipped)} skipped, {len(failed)} failed"
+    )
 
     if failed:
         click.echo("\nFailed:")
