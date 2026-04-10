@@ -1,5 +1,5 @@
+import platform
 import shutil
-import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,15 +15,38 @@ class OcrResult:
     reason: str = ""
 
 
-def check_ocrmypdf() -> str | None:
-    """Check if ocrmypdf is available. Returns path or None."""
-    path = shutil.which("ocrmypdf")
-    if path:
-        return path
-    # Common pipx location
-    pipx_path = Path.home() / ".local" / "bin" / "ocrmypdf"
-    if pipx_path.exists():
-        return str(pipx_path)
+def _check_ocr_dependencies() -> str | None:
+    """Check OCR dependencies. Returns error message or None if all OK."""
+    try:
+        import ocrmypdf  # noqa: F401
+    except ImportError:
+        return "OCR requires the 'ocr' extra. Install it with:\n\n  pip install wst-library[ocr]\n"
+
+    if not shutil.which("tesseract"):
+        system = platform.system()
+        if system == "Darwin":
+            instructions = (
+                "Tesseract OCR is not installed. Install it with:\n"
+                "\n"
+                "  brew install tesseract tesseract-lang\n"
+            )
+        elif system == "Linux":
+            instructions = (
+                "Tesseract OCR is not installed. Install it with:\n"
+                "\n"
+                "  # Debian/Ubuntu\n"
+                "  sudo apt install tesseract-ocr tesseract-ocr-spa\n"
+                "\n"
+                "  # Fedora\n"
+                "  sudo dnf install tesseract tesseract-langpack-spa\n"
+            )
+        else:
+            instructions = (
+                "Tesseract OCR is not installed.\n"
+                "Download from: https://github.com/tesseract-ocr/tesseract\n"
+            )
+        return instructions
+
     return None
 
 
@@ -60,57 +83,41 @@ def run_ocr(
     If output is None, replaces the file in-place.
     Returns an OcrResult.
     """
+    import ocrmypdf
+
     if path.suffix.lower() != ".pdf":
         return OcrResult(path.name, "skipped", "not a PDF")
 
     if not force and not needs_ocr(path):
         return OcrResult(path.name, "skipped", "already has text")
 
-    ocrmypdf_bin = check_ocrmypdf()
-    if not ocrmypdf_bin:
-        return OcrResult(path.name, "failed", "ocrmypdf not installed")
-
     in_place = output is None
     if in_place:
         output = path.with_name(path.stem + "_ocr_tmp" + path.suffix)
 
-    cmd = [
-        ocrmypdf_bin,
-        "-l",
-        language,
-        "--force-ocr",
-        "--output-type",
-        "pdf",
-        str(path),
-        str(output),
-    ]
-
     try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=600,
+        ocrmypdf.ocr(
+            input_file=path,
+            output_file=output,
+            language=language,
+            force_ocr=True,
+            output_type="pdf",
+            progress_bar=False,
         )
-        if result.returncode != 0:
-            # Clean up failed output
-            if output.exists():
-                output.unlink()
-            stderr = result.stderr.strip().split("\n")[-1] if result.stderr else "unknown error"
-            return OcrResult(path.name, "failed", stderr)
 
         if in_place:
             output.replace(path)
 
         return OcrResult(path.name, "processed")
-    except subprocess.TimeoutExpired:
-        if output.exists():
-            output.unlink()
-        return OcrResult(path.name, "failed", "timeout (>10 min)")
-    except Exception as e:
+    except ocrmypdf.exceptions.MissingDependencyError as e:
         if output.exists():
             output.unlink()
         return OcrResult(path.name, "failed", str(e))
+    except Exception as e:
+        if output.exists():
+            output.unlink()
+        msg = str(e).strip().split("\n")[-1] if str(e) else "unknown error"
+        return OcrResult(path.name, "failed", msg)
 
 
 def _format_eta(seconds: float) -> str:
@@ -142,6 +149,18 @@ def _show_progress(current: int, total: int, filename: str, elapsed: float) -> N
     click.echo("\r" + line.ljust(80), nl=False)
 
 
+def require_ocr_dependencies() -> bool:
+    """Check OCR dependencies and print instructions if missing.
+
+    Returns True if all dependencies are available, False otherwise.
+    """
+    error = _check_ocr_dependencies()
+    if error:
+        click.echo(f"Error: {error}", err=True)
+        return False
+    return True
+
+
 def ocr_files(
     files: list[Path],
     language: str = "spa",
@@ -153,13 +172,7 @@ def ocr_files(
         click.echo("No PDF files found.")
         return []
 
-    ocrmypdf_bin = check_ocrmypdf()
-    if not ocrmypdf_bin:
-        click.echo(
-            "Error: ocrmypdf is not installed.\n"
-            "Install it with: pipx install ocrmypdf\n"
-            "Also install language packs: brew install tesseract-lang"
-        )
+    if not require_ocr_dependencies():
         return []
 
     total = len(files)

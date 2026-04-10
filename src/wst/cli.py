@@ -84,7 +84,10 @@ def ingest(
 
         if ocr:
             from wst.ocr import ocr_files as run_ocr_batch
+            from wst.ocr import require_ocr_dependencies
 
+            if not require_ocr_dependencies():
+                return
             pdfs = [f for f in files_to_process if f.suffix.lower() == ".pdf"]
             if pdfs:
                 click.echo("\n--- OCR pass ---")
