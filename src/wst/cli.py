@@ -28,8 +28,12 @@ def cli(ctx: click.Context) -> None:
 @click.option("--verbose", "-v", is_flag=True, help="Show detailed per-file processing logs")
 @click.pass_context
 def ingest(
-    ctx: click.Context, path: Path | None, confirm: bool,
-    reprocess: bool, keep_inbox: bool, verbose: bool,
+    ctx: click.Context,
+    path: Path | None,
+    confirm: bool,
+    reprocess: bool,
+    keep_inbox: bool,
+    verbose: bool,
 ) -> None:
     """Ingest PDFs into the library.
 
@@ -61,8 +65,13 @@ def ingest(
                 return
             click.echo(f"Copied {len(copied_files)} file(s) to inbox.")
             ingest_files(
-                copied_files, ai, storage, db,
-                auto_confirm=not confirm, reprocess=reprocess, verbose=verbose,
+                copied_files,
+                ai,
+                storage,
+                db,
+                auto_confirm=not confirm,
+                reprocess=reprocess,
+                verbose=verbose,
             )
         else:
             if not config.inbox_path.exists() or not any(
@@ -72,8 +81,13 @@ def ingest(
                 return
             docs = _find_documents(config.inbox_path)
             ingest_files(
-                docs, ai, storage, db,
-                auto_confirm=not confirm, reprocess=reprocess, verbose=verbose,
+                docs,
+                ai,
+                storage,
+                db,
+                auto_confirm=not confirm,
+                reprocess=reprocess,
+                verbose=verbose,
             )
             if not keep_inbox:
                 removed = clean_inbox(config.inbox_path)
