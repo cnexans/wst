@@ -27,6 +27,7 @@ class ClaudeCLIBackend(AIBackend):
             [
                 "claude",
                 "-p",
+                "--no-notify",
                 "--model",
                 self.model,
                 "--output-format",
