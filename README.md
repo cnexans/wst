@@ -19,11 +19,14 @@ Named after **Wan Shi Tong**, the ancient spirit who collected every piece of kn
 ## Features
 
 - **AI-powered metadata**: Automatically extracts and completes metadata (title, author, type, year, summary, tags, etc.) using Claude CLI with web search for missing fields (year, ISBN, publisher)
+- **OCR support**: Optionally OCR scanned PDFs before ingestion to extract text from image-based documents
+- **Metadata enrichment**: Fill in missing fields (ISBN, table of contents, publisher, year) on existing documents using AI + web search, individually or in batch
 - **Organized library**: Files sorted by type (`books/`, `papers/`, `notes/`, `exercises/`, `guides/`) with consistent naming (`Author - Title (Year).pdf`)
 - **SQLite search index**: Full-text search across title, author, tags, subject, and summary via FTS5
+- **Coverage stats**: See metadata completeness across your library, broken down by document type and field
 - **Interactive browser**: Fuzzy-search your library, view and edit metadata interactively
-- **Cloud backup**: Backup files to iCloud Drive (macOS/Windows), with extensible provider system for future S3 support
-- **Extensible backends**: Abstract layers for AI (Claude CLI, future API/SDK) and storage (local filesystem, future S3)
+- **Cloud backup**: Backup files to iCloud Drive or S3, with extensible provider system
+- **Extensible backends**: Abstract layers for AI (Claude CLI, future API/SDK) and storage (local filesystem, S3)
 
 ## Installation
 
@@ -66,57 +69,79 @@ make install
 # Ingest PDFs from a folder
 wst ingest ~/Documents/papers/
 
-# Ingest from current directory
-wst ingest .
-
 # Ingest from default inbox (~/wst/inbox/)
 wst ingest
+
+# Ingest with OCR for scanned PDFs
+wst ingest --ocr
 
 # Ingest with manual confirmation for each file
 wst ingest --confirm
 
-# Re-ingest files with fresh AI metadata (e.g. after enabling web search)
+# Re-ingest files with fresh AI metadata
 wst ingest --reprocess
 
 # Search
 wst search "machine learning"
 wst search --author "Knuth"
 wst search --type textbook
-wst search --subject "Mathematics"
 
-# List all documents
+# List and show
 wst list
 wst list --type paper --sort year
-
-# Show full details
 wst show 1
-wst show "Design Patterns"
 
-# Interactive browser — fuzzy search, view and edit metadata
-wst browse
-
-# Edit a specific document
+# Edit metadata
 wst edit 1
 wst edit "Player's Handbook"
+wst edit 42 --enrich              # fill missing fields with AI + web search
 
-# Backup to iCloud
-wst backup icloud                    # interactive: all or select file
-wst backup icloud 1                  # backup specific file by ID
-wst backup icloud "Player's Handbook" # backup by title
-wst backup                           # interactive: choose provider
+# Enrich missing metadata in batch
+wst fix --dry-run                 # preview what needs fixing
+wst fix --type textbook           # fix all textbooks
+wst fix --field isbn --field toc  # only fill ISBN and TOC
+wst fix -y                        # auto-accept all changes
+
+# Metadata coverage stats
+wst stats
+wst stats --type textbook
+
+# Interactive browser
+wst browse
+
+# Backup
+wst backup icloud
+wst backup s3
 ```
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `wst ingest [PATH] [--confirm] [--reprocess]` | Ingest PDFs from a path or the inbox, generate metadata with AI |
-| `wst search <query> [--author] [--type] [--subject]` | Full-text search across the index |
-| `wst list [--type] [--sort]` | List all documents in the library |
+| `wst ingest [PATH]` | Ingest PDFs, generate metadata with AI. Options: `--ocr`, `--confirm`, `--reprocess`, `--verbose` |
+| `wst search <query>` | Full-text search. Options: `--author`, `--type`, `--subject` |
+| `wst list` | List all documents. Options: `--type`, `--sort` |
 | `wst show <id-or-title>` | Show complete metadata for a document |
-| `wst edit <id-or-title>` | Interactively edit metadata for a document |
+| `wst edit <id-or-title>` | Edit metadata interactively, or `--enrich` to fill missing fields with AI |
+| `wst fix` | Batch enrich documents with missing metadata. Options: `--type`, `--field`, `--dry-run`, `-y` |
+| `wst stats` | Show metadata coverage statistics. Options: `--type` |
 | `wst browse` | Interactive TUI for browsing and editing documents |
-| `wst backup [provider] [id-or-title]` | Backup files to a cloud provider (iCloud, future S3) |
+| `wst ocr <id-or-path>` | Run OCR on scanned PDFs |
+| `wst backup [provider]` | Backup files to iCloud or S3 |
+
+## How Ingestion Works
+
+```
+PDF file → [OCR (optional)] → Extract text + PDF metadata → AI generates metadata → Store + Index
+```
+
+1. **OCR** (optional, `--ocr`): Scanned PDFs are processed with `ocrmypdf` to extract text from images before metadata generation.
+2. **Text extraction**: Reads existing PDF metadata and text from the first pages using PyMuPDF.
+3. **AI metadata generation**: Sends the text sample to Claude CLI, which analyzes the content and uses web search to find ISBN, publisher, year, and other fields.
+4. **Storage**: Files are moved to the library, organized by document type with consistent naming (`Author - Title (Year).pdf`).
+5. **Indexing**: Metadata is stored in SQLite with full-text search (FTS5).
+
+After ingestion, use `wst fix` to batch-enrich documents that are missing fields (ISBN, table of contents, etc.) — this is especially useful for scanned books where the initial AI pass may not have found all metadata.
 
 ## Library Structure
 

@@ -1,4 +1,5 @@
 import shutil
+import time
 from pathlib import Path
 
 import click
@@ -6,8 +7,8 @@ import click
 from wst.ai import get_ai_backend
 from wst.config import WstConfig
 from wst.db import Database
-from wst.document import is_supported
-from wst.ingest import _find_documents, clean_inbox, ingest_files
+from wst.document import extract_doc_info, is_supported
+from wst.ingest import _find_documents, clean_inbox, format_metadata_display, ingest_files
 from wst.models import DocType, LibraryEntry
 from wst.storage import LocalStorage, build_dest_path
 
@@ -393,9 +394,90 @@ def show(ctx: click.Context, identifier: str) -> None:
 
 
 @cli.command()
-@click.argument("identifier")
+@click.option("--type", "-t", "doc_type", default=None,
+              type=click.Choice([dt.value for dt in DocType], case_sensitive=False),
+              help="Filter by document type")
 @click.pass_context
-def edit(ctx: click.Context, identifier: str) -> None:
+def stats(ctx: click.Context, doc_type: str | None) -> None:
+    """Show metadata coverage statistics.
+
+    \b
+    Displays how complete the metadata is across all documents,
+    broken down by document type and field.
+
+    \b
+    Examples:
+        wst stats
+        wst stats --type textbook
+    """
+    config: WstConfig = ctx.obj["config"]
+    db = Database(config.db_path)
+
+    try:
+        entries = db.list_all(doc_type=doc_type)
+        if not entries:
+            click.echo("Library is empty.")
+            return
+
+        fields = ["title", "author", "year", "publisher", "isbn",
+                   "language", "subject", "summary", "table_of_contents", "page_count"]
+
+        # Group by doc_type
+        by_type: dict[str, list[LibraryEntry]] = {}
+        for e in entries:
+            dt = e.metadata.doc_type.value
+            by_type.setdefault(dt, []).append(e)
+
+        # Overall coverage per field
+        click.echo(f"\nTotal documents: {len(entries)}\n")
+        click.echo(f"  {'Field':<22} {'Filled':>6} {'Missing':>7} {'Coverage':>9}")
+        click.echo("  " + "-" * 48)
+        for field in fields:
+            filled = sum(1 for e in entries if _field_filled(e, field))
+            missing = len(entries) - filled
+            pct = (filled / len(entries)) * 100
+            bar = _coverage_bar(pct)
+            click.echo(f"  {field:<22} {filled:>6} {missing:>7} {pct:>6.1f}%  {bar}")
+
+        # Per-type breakdown
+        key_fields = ["isbn", "table_of_contents", "year", "publisher", "summary"]
+        headers = ["ISBN", "TOC", "Year", "Publisher", "Summary"]
+        click.echo(f"\n  {'Type':<16} {'Total':>5}  {'  '.join(f'{h:>9}' for h in headers)}")
+        click.echo("  " + "-" * (24 + 11 * len(headers)))
+        for dt in sorted(by_type):
+            group = by_type[dt]
+            total = len(group)
+            pcts = []
+            for f in key_fields:
+                n = sum(1 for e in group if _field_filled(e, f))
+                pcts.append(f"{(n / total) * 100:>6.0f}%")
+            click.echo(f"  {dt:<16} {total:>5}  {'  '.join(f'{p:>9}' for p in pcts)}")
+        click.echo()
+    finally:
+        db.close()
+
+
+def _field_filled(entry: LibraryEntry, field: str) -> bool:
+    val = getattr(entry.metadata, field, None)
+    return val is not None and val != "" and val != []
+
+
+def _pct_str(filled: int, total: int) -> str:
+    pct = (filled / total) * 100 if total else 0
+    return f"{filled}/{total} {pct:.0f}%"
+
+
+def _coverage_bar(pct: float, width: int = 15) -> str:
+    filled = int(pct / 100 * width)
+    return "[" + "#" * filled + "." * (width - filled) + "]"
+
+
+@cli.command()
+@click.argument("identifier")
+@click.option("--enrich", is_flag=True, help="Use AI to fill missing fields (ISBN, publisher, etc.)")
+@click.option("--model", default="sonnet", help="AI model to use for enrichment")
+@click.pass_context
+def edit(ctx: click.Context, identifier: str, enrich: bool, model: str) -> None:
     """Interactively edit metadata for a document.
 
     \b
@@ -404,9 +486,14 @@ def edit(ctx: click.Context, identifier: str) -> None:
     changes, the file is moved to the correct folder.
 
     \b
+    Use --enrich to automatically fill missing fields (ISBN,
+    publisher, year) using AI and web search.
+
+    \b
     Examples:
         wst edit 1
         wst edit "Player's Handbook"
+        wst edit 42 --enrich
     """
     config: WstConfig = ctx.obj["config"]
     db = Database(config.db_path)
@@ -419,6 +506,11 @@ def edit(ctx: click.Context, identifier: str) -> None:
             raise SystemExit(1)
 
         m = entry.metadata
+
+        if enrich:
+            _enrich_entry(entry, config, db, model)
+            return
+
         click.echo(f"\nEditing: {m.title} (ID {entry.id})")
         click.echo("Press Enter to keep current value.\n")
 
@@ -460,6 +552,75 @@ def edit(ctx: click.Context, identifier: str) -> None:
         db.close()
 
 
+def _enrich_entry(
+    entry: LibraryEntry, config: WstConfig, db: Database, model: str
+) -> None:
+    m = entry.metadata
+    missing = _get_missing_fields(m)
+
+    if not missing:
+        click.echo(f"\n{m.title}: all fields already populated, nothing to enrich.")
+        return
+
+    click.echo(f"\nEnriching: {m.title} (ID {entry.id})")
+    click.echo(f"Missing fields: {', '.join(missing)}")
+
+    changes, enriched = _run_enrich(entry, config, model)
+
+    if not changes:
+        click.echo("  AI could not find any additional information.")
+        return
+
+    click.echo("\n  Found:")
+    for field, value in changes:
+        display = value if not isinstance(value, list) else ", ".join(value)
+        click.echo(f"    {field}: {display}")
+
+    if not click.confirm("\n  Apply these changes?", default=True):
+        click.echo("  Skipped.")
+        return
+
+    entry.metadata = enriched
+    db.update(entry)
+    click.echo("  Updated successfully.")
+
+
+def _get_missing_fields(m: "DocumentMetadata") -> list[str]:
+    return [k for k, v in m.model_dump().items() if v is None]
+
+
+def _run_enrich(
+    entry: LibraryEntry, config: WstConfig, model: str
+) -> tuple[list[tuple[str, object]], "DocumentMetadata"]:
+    """Run AI enrichment. Returns (changes, enriched_metadata)."""
+    from wst.models import DocumentMetadata  # noqa: F811
+
+    m = entry.metadata
+    missing = _get_missing_fields(m)
+
+    file_path = config.library_path / entry.file_path
+    text_sample = ""
+    if file_path.exists():
+        try:
+            _, text_sample, _ = extract_doc_info(file_path)
+        except Exception:
+            click.echo("  Warning: could not read file for text context.")
+
+    ai = get_ai_backend("claude", model=model)
+    click.echo("  Searching with AI...")
+
+    enriched = ai.enrich_metadata(m, text_sample)
+
+    changes = []
+    old_dump = m.model_dump()
+    new_dump = enriched.model_dump()
+    for field in missing:
+        if new_dump[field] != old_dump[field]:
+            changes.append((field, new_dump[field]))
+
+    return changes, enriched
+
+
 def _find_entry(db: Database, identifier: str) -> LibraryEntry | None:
     entry = None
     if identifier.isdigit():
@@ -484,6 +645,108 @@ def _prompt_doc_type(current: DocType) -> DocType:
     if choice and choice.isdigit() and 1 <= int(choice) <= len(types):
         return types[int(choice) - 1]
     return current
+
+
+@cli.command()
+@click.option("--type", "doc_type", type=click.Choice([dt.value for dt in DocType], case_sensitive=False), help="Only fix documents of this type")
+@click.option("--field", multiple=True, help="Only fix documents missing this field (e.g. --field isbn --field toc)")
+@click.option("--model", default="sonnet", help="AI model to use")
+@click.option("--yes", "-y", is_flag=True, help="Auto-accept all changes without prompting")
+@click.option("--dry-run", is_flag=True, help="Show what would be enriched without making changes")
+@click.pass_context
+def fix(ctx: click.Context, doc_type: str | None, field: tuple[str, ...], model: str, yes: bool, dry_run: bool) -> None:
+    """Enrich all documents that have missing metadata fields.
+
+    \b
+    Scans the library for documents with missing fields (ISBN, publisher,
+    year, table_of_contents, etc.) and uses AI + web search to fill them.
+
+    \b
+    Examples:
+        wst fix                         # fix all documents with missing fields
+        wst fix --type textbook         # only textbooks
+        wst fix --field isbn            # only those missing ISBN
+        wst fix --field isbn --field toc
+        wst fix --dry-run               # preview what needs fixing
+        wst fix --type novel -y         # fix all novels, auto-accept
+    """
+    field_map = {"toc": "table_of_contents"}
+    target_fields = [field_map.get(f, f) for f in field] if field else None
+
+    config: WstConfig = ctx.obj["config"]
+    db = Database(config.db_path)
+
+    try:
+        entries = db.list_all(doc_type=doc_type)
+
+        # Filter to entries with missing fields
+        to_fix = []
+        for entry in entries:
+            missing = _get_missing_fields(entry.metadata)
+            if target_fields:
+                missing = [f for f in missing if f in target_fields]
+            if missing:
+                to_fix.append((entry, missing))
+
+        if not to_fix:
+            click.echo("All documents are complete. Nothing to fix.")
+            return
+
+        click.echo(f"Found {len(to_fix)} document(s) with missing fields.\n")
+
+        if dry_run:
+            click.echo(f"{'ID':>4}  {'Title':<40}  {'Type':<12}  Missing fields")
+            click.echo("-" * 90)
+            for entry, missing in to_fix:
+                m = entry.metadata
+                title = m.title[:38] + ".." if len(m.title) > 40 else m.title
+                click.echo(f"{entry.id:>4}  {title:<40}  {m.doc_type.value:<12}  {', '.join(missing)}")
+            return
+
+        fixed = 0
+        failed = 0
+        skipped = 0
+        start = time.monotonic()
+
+        for i, (entry, missing) in enumerate(to_fix, 1):
+            m = entry.metadata
+            click.echo(f"\n[{i}/{len(to_fix)}] {m.title} (ID {entry.id})")
+            click.echo(f"  Missing: {', '.join(missing)}")
+
+            try:
+                changes, enriched = _run_enrich(entry, config, model)
+            except Exception as e:
+                click.echo(f"  Error: {e}")
+                failed += 1
+                continue
+
+            if not changes:
+                click.echo("  No new information found.")
+                skipped += 1
+                continue
+
+            click.echo("  Found:")
+            for f_name, value in changes:
+                display = value if not isinstance(value, list) else ", ".join(value)
+                # Truncate long values like TOC for display
+                if isinstance(display, str) and len(display) > 80:
+                    display = display[:77] + "..."
+                click.echo(f"    {f_name}: {display}")
+
+            if not yes:
+                if not click.confirm("  Apply?", default=True):
+                    skipped += 1
+                    continue
+
+            entry.metadata = enriched
+            db.update(entry)
+            fixed += 1
+            click.echo("  Updated.")
+
+        elapsed = time.monotonic() - start
+        click.echo(f"\nDone in {int(elapsed)}s: {fixed} fixed, {skipped} skipped, {failed} failed")
+    finally:
+        db.close()
 
 
 def _print_table(entries: list) -> None:

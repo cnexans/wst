@@ -1,6 +1,7 @@
 import pytest
 
 from wst.ai import ClaudeCLIBackend, get_ai_backend
+from wst.models import DocumentMetadata
 
 
 class TestGetAIBackend:
@@ -60,3 +61,43 @@ class TestClaudeCLIBackend:
     def test_extract_json_invalid_raises(self):
         with pytest.raises(ValueError, match="Could not extract JSON"):
             ClaudeCLIBackend._extract_json("no json here")
+
+    def test_build_enrich_prompt_contains_current_metadata(self):
+        backend = ClaudeCLIBackend()
+        metadata = DocumentMetadata(
+            title="El túnel",
+            author="Ernesto Sabato",
+            doc_type="novel",
+            year=1948,
+            publisher="Sur",
+            language="es",
+        )
+        prompt = backend._build_enrich_prompt(metadata, "sample text", "{}")
+        assert "Ernesto Sabato" in prompt
+        assert "isbn" in prompt
+        assert "Missing fields to fill" in prompt
+
+    def test_build_enrich_prompt_lists_missing_fields(self):
+        backend = ClaudeCLIBackend()
+        metadata = DocumentMetadata(
+            title="Test", author="Author", doc_type="book"
+        )
+        prompt = backend._build_enrich_prompt(metadata, "", "{}")
+        assert "year" in prompt
+        assert "publisher" in prompt
+        assert "isbn" in prompt
+
+    def test_enrich_normalizes_toc_list_to_string(self):
+        backend = ClaudeCLIBackend()
+        data = {
+            "title": "Test",
+            "author": "Author",
+            "doc_type": "book",
+            "table_of_contents": ["Chapter 1", "Chapter 2"],
+        }
+        # Normalize like enrich_metadata does
+        toc = data.get("table_of_contents")
+        if isinstance(toc, list):
+            data["table_of_contents"] = "\n".join(str(item) for item in toc)
+        result = DocumentMetadata.model_validate(data)
+        assert result.table_of_contents == "Chapter 1\nChapter 2"

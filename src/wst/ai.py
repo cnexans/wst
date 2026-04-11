@@ -12,6 +12,11 @@ class AIBackend(ABC):
         self, existing_meta: dict, text_sample: str, filename: str
     ) -> DocumentMetadata: ...
 
+    @abstractmethod
+    def enrich_metadata(
+        self, metadata: DocumentMetadata, text_sample: str
+    ) -> DocumentMetadata: ...
+
 
 class ClaudeCLIBackend(AIBackend):
     def __init__(self, model: str = "sonnet"):
@@ -23,11 +28,27 @@ class ClaudeCLIBackend(AIBackend):
         schema = json.dumps(DocumentMetadata.model_json_schema())
         prompt = self._build_prompt(existing_meta, text_sample, filename, schema)
 
+        result = self._run_claude(prompt)
+        return DocumentMetadata.model_validate(self._extract_json(result))
+
+    def enrich_metadata(
+        self, metadata: DocumentMetadata, text_sample: str
+    ) -> DocumentMetadata:
+        schema = json.dumps(DocumentMetadata.model_json_schema())
+        prompt = self._build_enrich_prompt(metadata, text_sample, schema)
+        result = self._run_claude(prompt)
+        data = self._extract_json(result)
+        # Normalize table_of_contents if AI returns a list
+        toc = data.get("table_of_contents")
+        if isinstance(toc, list):
+            data["table_of_contents"] = "\n".join(str(item) for item in toc)
+        return DocumentMetadata.model_validate(data)
+
+    def _run_claude(self, prompt: str) -> str:
         result = subprocess.run(
             [
                 "claude",
                 "-p",
-                "--no-notify",
                 "--model",
                 self.model,
                 "--output-format",
@@ -39,16 +60,14 @@ class ClaudeCLIBackend(AIBackend):
             input=prompt,
             capture_output=True,
             text=True,
-            timeout=180,
+            timeout=300,
         )
 
         if result.returncode != 0:
             raise RuntimeError(f"claude CLI failed: {result.stderr}")
 
         wrapper = json.loads(result.stdout)
-        raw = wrapper.get("result", "")
-
-        return DocumentMetadata.model_validate(self._extract_json(raw))
+        return wrapper.get("result", "")
 
     @staticmethod
     def _extract_json(text: str) -> dict:
@@ -100,6 +119,49 @@ No explanation, no markdown, just the raw JSON.
   use web search to find the correct publication year, publisher, and ISBN.
   Search for the book title and author to find this information."""
 
+
+    def _build_enrich_prompt(
+        self, metadata: DocumentMetadata, text_sample: str, schema: str
+    ) -> str:
+        current = metadata.model_dump(mode="json")
+        current_str = json.dumps(
+            {k: v for k, v in current.items() if v is not None}, indent=2
+        )
+        missing = [k for k, v in current.items() if v is None]
+
+        max_chars = 8000
+        if len(text_sample) > max_chars:
+            text_sample = text_sample[:max_chars] + "\n[...truncated]"
+
+        return f"""You have metadata for a document that is missing some fields.
+Your job is to FILL IN the missing fields using web search. Return the COMPLETE
+metadata as a JSON object matching the schema below.
+
+IMPORTANT:
+- Keep ALL existing values unchanged — do not modify fields that already have values.
+- You MUST use web search to find missing fields. Do NOT guess or return null without searching first.
+- For ISBN: search Google Books, Open Library, Amazon, or WorldCat. Try multiple queries:
+  - Search by exact title and author
+  - Try alternate titles (e.g. translated titles, original language titles)
+  - Try different editions (paperback, hardcover, international)
+  - Any valid ISBN for any edition of the book is acceptable
+- For table_of_contents: search the publisher's page, Google Books preview, or Open Library.
+- Search for the book by its title and author to find accurate publication info.
+- Only use null if you have searched and truly cannot find the information.
+
+## JSON Schema
+{schema}
+
+## Current metadata
+{current_str}
+
+## Missing fields to fill
+{json.dumps(missing)}
+
+## Text from first pages (for additional context)
+{text_sample}
+
+Return ONLY the JSON object, no explanation."""
 
 def get_ai_backend(name: str, model: str = "sonnet") -> AIBackend:
     backends = {
