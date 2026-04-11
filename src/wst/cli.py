@@ -165,6 +165,47 @@ def backup_icloud(ctx: click.Context, identifier: str | None) -> None:
         db.close()
 
 
+@backup.command("s3")
+@click.argument("identifier", required=False, default=None)
+@click.option("--configure", is_flag=True, help="Configure S3 credentials")
+@click.pass_context
+def backup_s3(
+    ctx: click.Context,
+    identifier: str | None,
+    configure: bool,
+) -> None:
+    """Backup files to S3 (or S3-compatible storage).
+
+    \b
+    Works with AWS S3, Cloudflare R2, Backblaze B2, MinIO, etc.
+    Credentials are stored in ~/wst/config.json.
+
+    \b
+    Examples:
+        wst backup s3 --configure       # set up credentials
+        wst backup s3                    # interactive backup
+        wst backup s3 3                  # backup document by ID
+        wst backup s3 "Cosmos"           # backup document by title
+    """
+    from wst.backup import S3Provider, run_backup_file, run_backup_interactive
+
+    config: WstConfig = ctx.obj["config"]
+    provider = S3Provider()
+
+    if configure:
+        provider.configure()
+        return
+
+    db = Database(config.db_path)
+    try:
+        if identifier:
+            run_backup_file(provider, db, config.library_path, identifier)
+        else:
+            run_backup_interactive(provider, db, config.library_path)
+    finally:
+        db.close()
+
+
 @cli.command()
 @click.pass_context
 def browse(ctx: click.Context) -> None:

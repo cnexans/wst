@@ -113,8 +113,187 @@ class ICloudProvider(BackupProvider):
         return count
 
 
+class S3Provider(BackupProvider):
+    name = "s3"
+
+    def __init__(self) -> None:
+        self._client = None
+        self._config: dict | None = None
+
+    def _get_config(self) -> dict | None:
+        if self._config is None:
+            from wst.config import get_s3_config
+
+            self._config = get_s3_config()
+        return self._config
+
+    def _get_client(self):
+        if self._client is not None:
+            return self._client
+
+        try:
+            import boto3
+        except ImportError:
+            print(
+                "Error: S3 backup requires the 's3' extra. Install it with:\n"
+                "\n"
+                "  pip install wst-library[s3]\n"
+            )
+            return None
+
+        cfg = self._get_config()
+        if not cfg:
+            return None
+
+        kwargs = {
+            "service_name": "s3",
+            "aws_access_key_id": cfg["access_key_id"],
+            "aws_secret_access_key": cfg["secret_access_key"],
+            "region_name": cfg.get("region", "us-east-1"),
+        }
+        if cfg.get("endpoint_url"):
+            kwargs["endpoint_url"] = cfg["endpoint_url"]
+
+        self._client = boto3.client(**kwargs)
+        return self._client
+
+    def is_configured(self) -> bool:
+        return self._get_config() is not None
+
+    def configure(self) -> None:
+        from wst.config import save_s3_config
+
+        try:
+            import boto3  # noqa: F401
+        except ImportError:
+            print(
+                "Error: S3 backup requires the 's3' extra. Install it with:\n"
+                "\n"
+                "  pip install wst-library[s3]\n"
+            )
+            return
+
+        print("\n--- S3 Backup Configuration ---")
+        print("Enter your S3 bucket credentials.")
+        print("These are stored locally in ~/wst/config.json\n")
+
+        bucket = inquirer.text(message="Bucket name:").execute().strip()
+        if not bucket:
+            print("Bucket name is required.")
+            return
+
+        region = (
+            inquirer.text(
+                message="Region:",
+                default="us-east-1",
+            )
+            .execute()
+            .strip()
+        )
+
+        endpoint_url = (
+            inquirer.text(
+                message="Endpoint URL (leave empty for AWS S3):",
+                default="",
+            )
+            .execute()
+            .strip()
+            or None
+        )
+
+        access_key_id = (
+            inquirer.text(
+                message="Access Key ID:",
+            )
+            .execute()
+            .strip()
+        )
+
+        secret_access_key = (
+            inquirer.text(
+                message="Secret Access Key:",
+            )
+            .execute()
+            .strip()
+        )
+
+        prefix = (
+            inquirer.text(
+                message="Key prefix (optional, e.g. 'wst/'):",
+                default="",
+            )
+            .execute()
+            .strip()
+        )
+
+        if not access_key_id or not secret_access_key:
+            print("Access Key ID and Secret Access Key are required.")
+            return
+
+        save_s3_config(
+            bucket=bucket,
+            access_key_id=access_key_id,
+            secret_access_key=secret_access_key,
+            region=region,
+            endpoint_url=endpoint_url,
+            prefix=prefix,
+        )
+
+        # Test connection
+        self._config = None
+        self._client = None
+        client = self._get_client()
+        if client:
+            try:
+                client.head_bucket(Bucket=bucket)
+                print(f"\nConfigured and verified: s3://{bucket}")
+            except Exception as e:
+                print(f"\nConfiguration saved, but connection test failed: {e}")
+                print("Check your credentials and bucket name.")
+
+    def _key(self, dest_relative: str) -> str:
+        cfg = self._get_config() or {}
+        prefix = cfg.get("prefix", "")
+        if prefix and not prefix.endswith("/"):
+            prefix += "/"
+        return prefix + dest_relative
+
+    def backup_file(self, source: Path, dest_relative: str) -> None:
+        client = self._get_client()
+        if not client:
+            return
+        cfg = self._get_config()
+        key = self._key(dest_relative)
+        client.upload_file(str(source), cfg["bucket"], key)
+
+    def backup_all(self, library_path: Path) -> int:
+        from wst.document import is_supported
+
+        client = self._get_client()
+        if not client:
+            return 0
+
+        count = 0
+        for f in sorted(p for p in library_path.rglob("*") if p.is_file() and is_supported(p)):
+            relative = str(f.relative_to(library_path))
+            print(f"  {relative}...", end=" ", flush=True)
+            self.backup_file(f, relative)
+            print("done")
+            count += 1
+
+        # Backup the database too
+        db_path = library_path / "wst.db"
+        if db_path.exists():
+            print("  wst.db...", end=" ", flush=True)
+            self.backup_file(db_path, "wst.db")
+            print("done")
+
+        return count
+
+
 PROVIDERS: dict[str, type[BackupProvider]] = {
     "icloud": ICloudProvider,
+    "s3": S3Provider,
 }
 
 
