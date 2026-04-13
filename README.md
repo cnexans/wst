@@ -164,8 +164,24 @@ See [docs/README.md](docs/README.md) for architecture details and diagrams.
 ## Requirements
 
 - Python 3.11+
-- `claude` CLI (authenticated) for AI metadata generation
+- AI backend (at least one):
+  - `claude` CLI (authenticated) — default backend
+  - `codex` CLI (authenticated) — use with `wst -b codex`
 - macOS, Windows, or Linux
+
+## Releasing
+
+To publish a new version to PyPI:
+
+```bash
+# 1. Bump version in pyproject.toml
+# 2. Trigger the release workflow from GitHub Actions:
+gh workflow run "Create Tag and Release" \
+  --field version="X.Y.Z" \
+  --field release_notes="Release notes here"
+```
+
+This creates a git tag, a GitHub Release, and publishes to PyPI automatically.
 
 ## License
 
