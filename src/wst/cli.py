@@ -14,11 +14,21 @@ from wst.storage import LocalStorage, build_dest_path
 
 
 @click.group()
+@click.option("--backend", "-b", default=None,
+              type=click.Choice(["claude", "codex"], case_sensitive=False),
+              help="AI backend to use (default: claude)")
+@click.option("--model", "-m", "ai_model", default=None,
+              help="AI model to use (e.g. sonnet, opus, gpt-5.4)")
 @click.pass_context
-def cli(ctx: click.Context) -> None:
+def cli(ctx: click.Context, backend: str | None, ai_model: str | None) -> None:
     """wst — organize your books and PDFs."""
     ctx.ensure_object(dict)
-    ctx.obj["config"] = WstConfig()
+    config = WstConfig()
+    if backend:
+        config.ai_backend = backend
+    if ai_model:
+        config.ai_model = ai_model
+    ctx.obj["config"] = config
 
 
 @cli.command()
@@ -475,9 +485,8 @@ def _coverage_bar(pct: float, width: int = 15) -> str:
 @cli.command()
 @click.argument("identifier")
 @click.option("--enrich", is_flag=True, help="Use AI to fill missing fields (ISBN, publisher, etc.)")
-@click.option("--model", default="sonnet", help="AI model to use for enrichment")
 @click.pass_context
-def edit(ctx: click.Context, identifier: str, enrich: bool, model: str) -> None:
+def edit(ctx: click.Context, identifier: str, enrich: bool) -> None:
     """Interactively edit metadata for a document.
 
     \b
@@ -508,7 +517,7 @@ def edit(ctx: click.Context, identifier: str, enrich: bool, model: str) -> None:
         m = entry.metadata
 
         if enrich:
-            _enrich_entry(entry, config, db, model)
+            _enrich_entry(entry, config, db)
             return
 
         click.echo(f"\nEditing: {m.title} (ID {entry.id})")
@@ -553,7 +562,7 @@ def edit(ctx: click.Context, identifier: str, enrich: bool, model: str) -> None:
 
 
 def _enrich_entry(
-    entry: LibraryEntry, config: WstConfig, db: Database, model: str
+    entry: LibraryEntry, config: WstConfig, db: Database
 ) -> None:
     m = entry.metadata
     missing = _get_missing_fields(m)
@@ -565,7 +574,7 @@ def _enrich_entry(
     click.echo(f"\nEnriching: {m.title} (ID {entry.id})")
     click.echo(f"Missing fields: {', '.join(missing)}")
 
-    changes, enriched = _run_enrich(entry, config, model)
+    changes, enriched = _run_enrich(entry, config)
 
     if not changes:
         click.echo("  AI could not find any additional information.")
@@ -590,7 +599,7 @@ def _get_missing_fields(m: "DocumentMetadata") -> list[str]:
 
 
 def _run_enrich(
-    entry: LibraryEntry, config: WstConfig, model: str
+    entry: LibraryEntry, config: WstConfig
 ) -> tuple[list[tuple[str, object]], "DocumentMetadata"]:
     """Run AI enrichment. Returns (changes, enriched_metadata)."""
     from wst.models import DocumentMetadata  # noqa: F811
@@ -606,7 +615,7 @@ def _run_enrich(
         except Exception:
             click.echo("  Warning: could not read file for text context.")
 
-    ai = get_ai_backend("claude", model=model)
+    ai = get_ai_backend(config.ai_backend, config.ai_model)
     click.echo("  Searching with AI...")
 
     enriched = ai.enrich_metadata(m, text_sample)
@@ -650,11 +659,10 @@ def _prompt_doc_type(current: DocType) -> DocType:
 @cli.command()
 @click.option("--type", "doc_type", type=click.Choice([dt.value for dt in DocType], case_sensitive=False), help="Only fix documents of this type")
 @click.option("--field", multiple=True, help="Only fix documents missing this field (e.g. --field isbn --field toc)")
-@click.option("--model", default="sonnet", help="AI model to use")
 @click.option("--yes", "-y", is_flag=True, help="Auto-accept all changes without prompting")
 @click.option("--dry-run", is_flag=True, help="Show what would be enriched without making changes")
 @click.pass_context
-def fix(ctx: click.Context, doc_type: str | None, field: tuple[str, ...], model: str, yes: bool, dry_run: bool) -> None:
+def fix(ctx: click.Context, doc_type: str | None, field: tuple[str, ...], yes: bool, dry_run: bool) -> None:
     """Enrich all documents that have missing metadata fields.
 
     \b
@@ -714,7 +722,7 @@ def fix(ctx: click.Context, doc_type: str | None, field: tuple[str, ...], model:
             click.echo(f"  Missing: {', '.join(missing)}")
 
             try:
-                changes, enriched = _run_enrich(entry, config, model)
+                changes, enriched = _run_enrich(entry, config)
             except Exception as e:
                 click.echo(f"  Error: {e}")
                 failed += 1

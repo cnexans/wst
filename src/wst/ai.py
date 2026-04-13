@@ -1,6 +1,7 @@
 import json
 import re
 import subprocess
+import tempfile
 from abc import ABC, abstractmethod
 
 from wst.models import DocumentMetadata
@@ -18,79 +19,32 @@ class AIBackend(ABC):
     ) -> DocumentMetadata: ...
 
 
-class ClaudeCLIBackend(AIBackend):
-    def __init__(self, model: str = "sonnet"):
-        self.model = model
+def _extract_json(text: str) -> dict:
+    text = text.strip()
+    if text.startswith("{"):
+        return json.loads(text)
+    match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
+    if match:
+        return json.loads(match.group(1))
+    raise ValueError(f"Could not extract JSON from AI response: {text[:200]}")
 
-    def generate_metadata(
-        self, existing_meta: dict, text_sample: str, filename: str
-    ) -> DocumentMetadata:
-        schema = json.dumps(DocumentMetadata.model_json_schema())
-        prompt = self._build_prompt(existing_meta, text_sample, filename, schema)
 
-        result = self._run_claude(prompt)
-        return DocumentMetadata.model_validate(self._extract_json(result))
+def _normalize_enrich_result(data: dict) -> dict:
+    toc = data.get("table_of_contents")
+    if isinstance(toc, list):
+        data["table_of_contents"] = "\n".join(str(item) for item in toc)
+    return data
 
-    def enrich_metadata(
-        self, metadata: DocumentMetadata, text_sample: str
-    ) -> DocumentMetadata:
-        schema = json.dumps(DocumentMetadata.model_json_schema())
-        prompt = self._build_enrich_prompt(metadata, text_sample, schema)
-        result = self._run_claude(prompt)
-        data = self._extract_json(result)
-        # Normalize table_of_contents if AI returns a list
-        toc = data.get("table_of_contents")
-        if isinstance(toc, list):
-            data["table_of_contents"] = "\n".join(str(item) for item in toc)
-        return DocumentMetadata.model_validate(data)
 
-    def _run_claude(self, prompt: str) -> str:
-        result = subprocess.run(
-            [
-                "claude",
-                "-p",
-                "--model",
-                self.model,
-                "--output-format",
-                "json",
-                "--allowedTools",
-                "WebSearch",
-                "WebFetch",
-            ],
-            input=prompt,
-            capture_output=True,
-            text=True,
-            timeout=300,
-        )
+def _build_ingest_prompt(
+    existing_meta: dict, text_sample: str, filename: str, schema: str
+) -> str:
+    meta_str = json.dumps({k: v for k, v in existing_meta.items() if v}, indent=2)
+    max_chars = 8000
+    if len(text_sample) > max_chars:
+        text_sample = text_sample[:max_chars] + "\n[...truncated]"
 
-        if result.returncode != 0:
-            raise RuntimeError(f"claude CLI failed: {result.stderr}")
-
-        wrapper = json.loads(result.stdout)
-        return wrapper.get("result", "")
-
-    @staticmethod
-    def _extract_json(text: str) -> dict:
-        """Extract JSON object from a response that may contain markdown fences."""
-        # Try direct parse first
-        text = text.strip()
-        if text.startswith("{"):
-            return json.loads(text)
-        # Extract from ```json ... ``` block
-        match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
-        if match:
-            return json.loads(match.group(1))
-        raise ValueError(f"Could not extract JSON from AI response: {text[:200]}")
-
-    def _build_prompt(
-        self, existing_meta: dict, text_sample: str, filename: str, schema: str
-    ) -> str:
-        meta_str = json.dumps({k: v for k, v in existing_meta.items() if v}, indent=2)
-        max_chars = 8000
-        if len(text_sample) > max_chars:
-            text_sample = text_sample[:max_chars] + "\n[...truncated]"
-
-        return f"""Analyze this PDF and return ONLY a JSON object matching the schema below.
+    return f"""Analyze this PDF and return ONLY a JSON object matching the schema below.
 No explanation, no markdown, just the raw JSON.
 
 ## JSON Schema
@@ -120,20 +74,20 @@ No explanation, no markdown, just the raw JSON.
   Search for the book title and author to find this information."""
 
 
-    def _build_enrich_prompt(
-        self, metadata: DocumentMetadata, text_sample: str, schema: str
-    ) -> str:
-        current = metadata.model_dump(mode="json")
-        current_str = json.dumps(
-            {k: v for k, v in current.items() if v is not None}, indent=2
-        )
-        missing = [k for k, v in current.items() if v is None]
+def _build_enrich_prompt(
+    metadata: DocumentMetadata, text_sample: str, schema: str
+) -> str:
+    current = metadata.model_dump(mode="json")
+    current_str = json.dumps(
+        {k: v for k, v in current.items() if v is not None}, indent=2
+    )
+    missing = [k for k, v in current.items() if v is None]
 
-        max_chars = 8000
-        if len(text_sample) > max_chars:
-            text_sample = text_sample[:max_chars] + "\n[...truncated]"
+    max_chars = 8000
+    if len(text_sample) > max_chars:
+        text_sample = text_sample[:max_chars] + "\n[...truncated]"
 
-        return f"""You have metadata for a document that is missing some fields.
+    return f"""You have metadata for a document that is missing some fields.
 Your job is to FILL IN the missing fields using web search. Return the COMPLETE
 metadata as a JSON object matching the schema below.
 
@@ -163,11 +117,137 @@ IMPORTANT:
 
 Return ONLY the JSON object, no explanation."""
 
-def get_ai_backend(name: str, model: str = "sonnet") -> AIBackend:
+
+class ClaudeCLIBackend(AIBackend):
+    def __init__(self, model: str = "sonnet"):
+        self.model = model
+
+    def generate_metadata(
+        self, existing_meta: dict, text_sample: str, filename: str
+    ) -> DocumentMetadata:
+        schema = json.dumps(DocumentMetadata.model_json_schema())
+        prompt = _build_ingest_prompt(existing_meta, text_sample, filename, schema)
+        result = self._run_claude(prompt)
+        return DocumentMetadata.model_validate(_extract_json(result))
+
+    def enrich_metadata(
+        self, metadata: DocumentMetadata, text_sample: str
+    ) -> DocumentMetadata:
+        schema = json.dumps(DocumentMetadata.model_json_schema())
+        prompt = _build_enrich_prompt(metadata, text_sample, schema)
+        result = self._run_claude(prompt)
+        data = _normalize_enrich_result(_extract_json(result))
+        return DocumentMetadata.model_validate(data)
+
+    def _run_claude(self, prompt: str) -> str:
+        result = subprocess.run(
+            [
+                "claude",
+                "-p",
+                "--model",
+                self.model,
+                "--output-format",
+                "json",
+                "--allowedTools",
+                "WebSearch",
+                "WebFetch",
+            ],
+            input=prompt,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+
+        if result.returncode != 0:
+            raise RuntimeError(f"claude CLI failed: {result.stderr}")
+
+        wrapper = json.loads(result.stdout)
+        return wrapper.get("result", "")
+
+
+class CodexCLIBackend(AIBackend):
+    def __init__(self, model: str = "gpt-5.4"):
+        self.model = model
+
+    def generate_metadata(
+        self, existing_meta: dict, text_sample: str, filename: str
+    ) -> DocumentMetadata:
+        schema = json.dumps(DocumentMetadata.model_json_schema())
+        prompt = _build_ingest_prompt(existing_meta, text_sample, filename, schema)
+        result = self._run_codex(prompt)
+        return DocumentMetadata.model_validate(_extract_json(result))
+
+    def enrich_metadata(
+        self, metadata: DocumentMetadata, text_sample: str
+    ) -> DocumentMetadata:
+        schema = json.dumps(DocumentMetadata.model_json_schema())
+        prompt = _build_enrich_prompt(metadata, text_sample, schema)
+        result = self._run_codex(prompt)
+        data = _normalize_enrich_result(_extract_json(result))
+        return DocumentMetadata.model_validate(data)
+
+    def _run_codex(self, prompt: str) -> str:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".txt", delete=False
+        ) as out_file:
+            out_path = out_file.name
+
+        result = subprocess.run(
+            [
+                "codex",
+                "exec",
+                prompt,
+                "--model",
+                self.model,
+                "-o",
+                out_path,
+                "--sandbox",
+                "read-only",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+
+        if result.returncode != 0:
+            stderr = result.stderr or ""
+            # Check JSONL output for error messages
+            for line in result.stdout.splitlines():
+                try:
+                    event = json.loads(line)
+                    if event.get("type") == "error":
+                        stderr = event.get("message", stderr)
+                except (json.JSONDecodeError, KeyError):
+                    pass
+            raise RuntimeError(f"codex CLI failed: {stderr}")
+
+        try:
+            from pathlib import Path
+
+            output = Path(out_path).read_text().strip()
+            Path(out_path).unlink(missing_ok=True)
+        except Exception as e:
+            raise RuntimeError(f"could not read codex output: {e}")
+
+        if not output:
+            raise RuntimeError("codex returned empty response")
+
+        return output
+
+
+DEFAULT_MODELS = {
+    "claude": "sonnet",
+    "codex": "gpt-5.4",
+}
+
+
+def get_ai_backend(name: str, model: str | None = None) -> AIBackend:
     backends = {
         "claude": ClaudeCLIBackend,
+        "codex": CodexCLIBackend,
     }
     cls = backends.get(name)
     if cls is None:
         raise ValueError(f"Unknown AI backend: {name}. Available: {', '.join(backends)}")
-    return cls(model=model)
+    resolved_model = model or DEFAULT_MODELS.get(name, "")
+    return cls(model=resolved_model)
