@@ -13,7 +13,6 @@ impl Db {
             db_path,
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
-        conn.pragma_update(None, "journal_mode", "wal")?;
         Ok(Db { conn })
     }
 
@@ -47,35 +46,33 @@ impl Db {
         &self,
         query: &str,
         doc_type: Option<&str>,
-        author: Option<&str>,
-        subject: Option<&str>,
+        _author: Option<&str>,
+        _subject: Option<&str>,
     ) -> Result<Vec<Document>> {
-        let mut sql = String::from(
-            "SELECT d.* FROM documents d \
-             JOIN documents_fts f ON d.id = f.rowid \
-             WHERE documents_fts MATCH ?1",
-        );
-        let mut params_vec: Vec<Box<dyn rusqlite::types::ToSql>> =
-            vec![Box::new(query.to_string())];
-        let mut idx = 2;
-
-        if let Some(dt) = doc_type {
-            sql.push_str(&format!(" AND d.doc_type = ?{idx}"));
-            params_vec.push(Box::new(dt.to_string()));
-            idx += 1;
-        }
-        if let Some(a) = author {
-            sql.push_str(&format!(" AND d.author LIKE ?{idx}"));
-            params_vec.push(Box::new(format!("%{a}%")));
-            idx += 1;
-        }
-        if let Some(s) = subject {
-            sql.push_str(&format!(" AND d.subject LIKE ?{idx}"));
-            params_vec.push(Box::new(format!("%{s}%")));
-            let _ = idx;
+        // Sanitize query for FTS5: remove special chars, add prefix matching
+        let fts_query = Self::build_fts_query(query);
+        if fts_query.is_empty() {
+            return self.list_all(doc_type, "title");
         }
 
-        sql.push_str(" ORDER BY rank");
+        let (sql, params_vec): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = match doc_type {
+            Some(dt) => (
+                "SELECT d.* FROM documents d \
+                 JOIN documents_fts f ON d.id = f.rowid \
+                 WHERE documents_fts MATCH ?1 AND d.doc_type = ?2 \
+                 ORDER BY rank"
+                    .to_string(),
+                vec![Box::new(fts_query), Box::new(dt.to_string())],
+            ),
+            None => (
+                "SELECT d.* FROM documents d \
+                 JOIN documents_fts f ON d.id = f.rowid \
+                 WHERE documents_fts MATCH ?1 \
+                 ORDER BY rank"
+                    .to_string(),
+                vec![Box::new(fts_query)],
+            ),
+        };
 
         let mut stmt = self.conn.prepare(&sql)?;
         let params_refs: Vec<&dyn rusqlite::types::ToSql> =
@@ -83,6 +80,23 @@ impl Db {
         let rows = stmt.query_map(params_refs.as_slice(), |row| self.row_to_document(row))?;
 
         rows.collect()
+    }
+
+    fn build_fts_query(query: &str) -> String {
+        // Split into words, keep only alphanumeric, add * for prefix matching
+        query
+            .split_whitespace()
+            .map(|word| {
+                let clean: String = word.chars().filter(|c| c.is_alphanumeric()).collect();
+                if clean.is_empty() {
+                    String::new()
+                } else {
+                    format!("{clean}*")
+                }
+            })
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 
     pub fn get(&self, id: i64) -> Result<Option<Document>> {

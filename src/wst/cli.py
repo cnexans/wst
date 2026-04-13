@@ -749,6 +749,78 @@ def fix(ctx: click.Context, doc_type: str | None, field: tuple[str, ...], model:
         db.close()
 
 
+@cli.command()
+@click.option("--type", "-t", "doc_type", default=None,
+              type=click.Choice([dt.value for dt in DocType], case_sensitive=False),
+              help="Only process documents of this type")
+@click.pass_context
+def covers(ctx: click.Context, doc_type: str | None) -> None:
+    """Download and cache cover images for all documents.
+
+    \b
+    For documents with ISBN: fetches from Open Library.
+    For documents without ISBN (or no cover found): renders
+    the first page of the PDF as a thumbnail.
+
+    \b
+    Covers are cached at ~/wst/library/.covers/ and used
+    by the desktop app.
+
+    \b
+    Examples:
+        wst covers                  # all documents
+        wst covers --type textbook  # only textbooks
+    """
+    from wst.covers import ensure_cover, get_cached_cover
+
+    config: WstConfig = ctx.obj["config"]
+    db = Database(config.db_path)
+
+    try:
+        entries = db.list_all(doc_type=doc_type)
+        total = len(entries)
+
+        already = sum(
+            1 for e in entries
+            if get_cached_cover(config.library_path, e.id) is not None
+        )
+        to_fetch = total - already
+        click.echo(f"Total: {total}, cached: {already}, to fetch: {to_fetch}")
+
+        if to_fetch == 0:
+            click.echo("All covers are cached.")
+            return
+
+        fetched = 0
+        failed = 0
+        start = time.monotonic()
+
+        for i, entry in enumerate(entries, 1):
+            if get_cached_cover(config.library_path, entry.id) is not None:
+                continue
+
+            m = entry.metadata
+            name = m.title[:40] + ".." if len(m.title) > 42 else m.title
+            source = "ISBN" if m.isbn else "PDF"
+            click.echo(f"  [{i}/{total}] {name} ({source})...", nl=False)
+
+            result = ensure_cover(
+                config.library_path, entry.id, m.isbn, entry.file_path
+            )
+
+            if result:
+                fetched += 1
+                click.echo(" ok")
+            else:
+                failed += 1
+                click.echo(" failed")
+
+        elapsed = time.monotonic() - start
+        click.echo(f"\nDone in {int(elapsed)}s: {fetched} fetched, {failed} failed")
+    finally:
+        db.close()
+
+
 def _print_table(entries: list) -> None:
     """Print a simple table of entries."""
     click.echo(f"{'ID':>4}  {'Title':<40}  {'Author':<25}  {'Type':<12}  {'Year':>4}")

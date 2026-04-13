@@ -9,6 +9,9 @@
     "core:window:allow-set-title",
     {
       "identifier": "core:image:default"
+    },
+    {
+      "identifier": "core:resources:default"
     }
   ]
 }

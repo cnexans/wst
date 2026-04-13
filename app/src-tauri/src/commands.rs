@@ -7,6 +7,7 @@ use crate::models::{Document, LibraryStats};
 
 pub struct DbState(pub std::sync::Mutex<Db>);
 pub struct CoverState(pub CoverManager);
+pub struct LibraryPath(pub std::path::PathBuf);
 
 #[tauri::command]
 pub fn list_documents(
@@ -23,12 +24,10 @@ pub fn list_documents(
 pub fn search_documents(
     query: String,
     doc_type: Option<String>,
-    author: Option<String>,
-    subject: Option<String>,
     state: State<DbState>,
 ) -> Result<Vec<Document>, String> {
     let db = state.0.lock().map_err(|e| e.to_string())?;
-    db.search(&query, doc_type.as_deref(), author.as_deref(), subject.as_deref())
+    db.search(&query, doc_type.as_deref(), None, None)
         .map_err(|e| e.to_string())
 }
 
@@ -46,17 +45,7 @@ pub fn get_library_stats(state: State<DbState>) -> Result<LibraryStats, String> 
 
 #[tauri::command]
 pub fn get_cover(id: i64, state: State<CoverState>) -> Option<String> {
-    state.0.get_cached(id)
-}
-
-#[tauri::command]
-pub async fn ensure_cover(
-    id: i64,
-    isbn: Option<String>,
-    file_path: String,
-    state: State<'_, CoverState>,
-) -> Result<Option<String>, String> {
-    Ok(state.0.ensure_cover(id, isbn.as_deref(), &file_path).await)
+    state.0.get_cover_filename(id)
 }
 
 #[tauri::command]
@@ -78,5 +67,3 @@ pub fn reveal_in_finder(file_path: String, library_path: State<LibraryPath>) -> 
         .map_err(|e| e.to_string())?;
     Ok(())
 }
-
-pub struct LibraryPath(pub std::path::PathBuf);

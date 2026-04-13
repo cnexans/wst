@@ -1,6 +1,5 @@
-import { createEffect, onMount, Show } from "solid-js";
+import { createEffect, onMount, Show, on, createSignal } from "solid-js";
 import {
-  documents,
   setDocuments,
   searchQuery,
   activeDocType,
@@ -17,39 +16,53 @@ import BookList from "./components/BookList";
 import BookDetail from "./components/BookDetail";
 
 export default function App() {
+  let debounceTimer: number | undefined;
+  let fetchId = 0;
+  const [fading, setFading] = createSignal(false);
+
   onMount(async () => {
-    const stats = await getLibraryStats();
+    const [stats, docs] = await Promise.all([
+      getLibraryStats(),
+      listDocuments(),
+    ]);
     setLibraryStats(stats);
-    const docs = await listDocuments();
     setDocuments(docs);
   });
 
-  // Reactive: re-fetch when filters change
-  createEffect(() => {
-    const query = searchQuery();
-    const docType = activeDocType();
-    const sort = sortBy();
+  createEffect(
+    on([searchQuery, activeDocType, sortBy], ([query, docType, sort]) => {
+      clearTimeout(debounceTimer);
+      const currentFetch = ++fetchId;
 
-    let debounce: number | undefined;
+      const doFetch = async () => {
+        try {
+          let results;
+          if (query.trim()) {
+            results = await searchDocuments(query, docType ?? undefined);
+          } else {
+            results = await listDocuments(docType ?? undefined, sort);
+          }
+          // Only apply if this is still the latest fetch
+          if (currentFetch === fetchId) {
+            setFading(true);
+            requestAnimationFrame(() => {
+              setDocuments(results);
+              // Let the browser paint the new content, then fade in
+              requestAnimationFrame(() => setFading(false));
+            });
+          }
+        } catch (e) {
+          console.error("Search error:", e);
+        }
+      };
 
-    const fetch = async () => {
       if (query.trim()) {
-        const results = await searchDocuments(query, docType ?? undefined);
-        setDocuments(results);
+        debounceTimer = window.setTimeout(doFetch, 250);
       } else {
-        const results = await listDocuments(docType ?? undefined, sort);
-        setDocuments(results);
+        doFetch();
       }
-    };
-
-    if (query) {
-      debounce = window.setTimeout(fetch, 150);
-    } else {
-      fetch();
-    }
-
-    return () => clearTimeout(debounce);
-  });
+    })
+  );
 
   return (
     <div class="app">
@@ -60,9 +73,11 @@ export default function App() {
         <Sidebar />
         <main class="app-main">
           <Toolbar />
-          <Show when={viewMode() === "grid"} fallback={<BookList />}>
-            <BookGrid />
-          </Show>
+          <div class={`content-area ${fading() ? "fading" : ""}`}>
+            <Show when={viewMode() === "grid"} fallback={<BookList />}>
+              <BookGrid />
+            </Show>
+          </div>
         </main>
       </div>
       <BookDetail />

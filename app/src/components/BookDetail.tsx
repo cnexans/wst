@@ -1,18 +1,22 @@
 import { Show, For } from "solid-js";
-import { selectedDoc, setSelectedDoc, covers } from "../lib/store";
-import { openPdf, revealInFinder } from "../lib/tauri";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { selectedDoc, setSelectedDoc } from "../lib/store";
+import { openPdf, revealInFinder, getCover } from "../lib/tauri";
 import { DOC_TYPE_LABELS } from "../lib/types";
+import { createSignal, createEffect } from "solid-js";
 
 export default function BookDetail() {
   const doc = () => selectedDoc();
+  const [coverUrl, setCoverUrl] = createSignal<string | null>(null);
 
-  const coverUrl = () => {
+  createEffect(async () => {
     const d = doc();
-    if (!d) return null;
-    const path = covers()[d.id];
-    return path ? convertFileSrc(path) : null;
-  };
+    if (d) {
+      const filename = await getCover(d.id);
+      setCoverUrl(filename ? `covers://localhost/${filename}` : null);
+    } else {
+      setCoverUrl(null);
+    }
+  });
 
   const close = () => setSelectedDoc(null);
 

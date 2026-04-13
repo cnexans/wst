@@ -74,6 +74,18 @@ body {
   overflow: hidden;
 }
 
+.content-area {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transition: opacity 120ms ease;
+}
+
+.content-area.fading {
+  opacity: 0.4;
+}
+
 /* Search bar */
 .search-bar {
   position: relative;

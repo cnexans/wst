@@ -18,8 +18,6 @@ export async function searchDocuments(
   return invoke("search_documents", {
     query,
     docType: docType ?? null,
-    author: null,
-    subject: null,
   });
 }
 
@@ -33,14 +31,6 @@ export async function getLibraryStats(): Promise<LibraryStats> {
 
 export async function getCover(id: number): Promise<string | null> {
   return invoke("get_cover", { id });
-}
-
-export async function ensureCover(
-  id: number,
-  isbn: string | null,
-  filePath: string
-): Promise<string | null> {
-  return invoke("ensure_cover", { id, isbn, filePath });
 }
 
 export async function openPdf(filePath: string): Promise<void> {
