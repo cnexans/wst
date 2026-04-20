@@ -14,9 +14,7 @@ class AIBackend(ABC):
     ) -> DocumentMetadata: ...
 
     @abstractmethod
-    def enrich_metadata(
-        self, metadata: DocumentMetadata, text_sample: str
-    ) -> DocumentMetadata: ...
+    def enrich_metadata(self, metadata: DocumentMetadata, text_sample: str) -> DocumentMetadata: ...
 
 
 def _extract_json(text: str) -> dict:
@@ -36,9 +34,7 @@ def _normalize_enrich_result(data: dict) -> dict:
     return data
 
 
-def _build_ingest_prompt(
-    existing_meta: dict, text_sample: str, filename: str, schema: str
-) -> str:
+def _build_ingest_prompt(existing_meta: dict, text_sample: str, filename: str, schema: str) -> str:
     meta_str = json.dumps({k: v for k, v in existing_meta.items() if v}, indent=2)
     max_chars = 8000
     if len(text_sample) > max_chars:
@@ -74,13 +70,9 @@ No explanation, no markdown, just the raw JSON.
   Search for the book title and author to find this information."""
 
 
-def _build_enrich_prompt(
-    metadata: DocumentMetadata, text_sample: str, schema: str
-) -> str:
+def _build_enrich_prompt(metadata: DocumentMetadata, text_sample: str, schema: str) -> str:
     current = metadata.model_dump(mode="json")
-    current_str = json.dumps(
-        {k: v for k, v in current.items() if v is not None}, indent=2
-    )
+    current_str = json.dumps({k: v for k, v in current.items() if v is not None}, indent=2)
     missing = [k for k, v in current.items() if v is None]
 
     max_chars = 8000
@@ -131,9 +123,7 @@ class ClaudeCLIBackend(AIBackend):
         result = self._run_claude(prompt)
         return DocumentMetadata.model_validate(_extract_json(result))
 
-    def enrich_metadata(
-        self, metadata: DocumentMetadata, text_sample: str
-    ) -> DocumentMetadata:
+    def enrich_metadata(self, metadata: DocumentMetadata, text_sample: str) -> DocumentMetadata:
         schema = json.dumps(DocumentMetadata.model_json_schema())
         prompt = _build_enrich_prompt(metadata, text_sample, schema)
         result = self._run_claude(prompt)
@@ -178,9 +168,7 @@ class CodexCLIBackend(AIBackend):
         result = self._run_codex(prompt)
         return DocumentMetadata.model_validate(_extract_json(result))
 
-    def enrich_metadata(
-        self, metadata: DocumentMetadata, text_sample: str
-    ) -> DocumentMetadata:
+    def enrich_metadata(self, metadata: DocumentMetadata, text_sample: str) -> DocumentMetadata:
         schema = json.dumps(DocumentMetadata.model_json_schema())
         prompt = _build_enrich_prompt(metadata, text_sample, schema)
         result = self._run_codex(prompt)
@@ -188,9 +176,7 @@ class CodexCLIBackend(AIBackend):
         return DocumentMetadata.model_validate(data)
 
     def _run_codex(self, prompt: str) -> str:
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".txt", delete=False
-        ) as out_file:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as out_file:
             out_path = out_file.name
 
         result = subprocess.run(

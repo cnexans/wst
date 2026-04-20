@@ -183,4 +183,3 @@ def _md_table(rows: list[dict[str, Any]]) -> list[str]:
             vals.append(cell.replace("\n", " "))
         lines.append("| " + " | ".join(vals) + " |")
     return lines
-

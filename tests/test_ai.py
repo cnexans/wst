@@ -84,9 +84,7 @@ class TestPromptBuilders:
         assert "Missing fields to fill" in prompt
 
     def test_enrich_prompt_lists_missing_fields(self):
-        metadata = DocumentMetadata(
-            title="Test", author="Author", doc_type="book"
-        )
+        metadata = DocumentMetadata(title="Test", author="Author", doc_type="book")
         prompt = _build_enrich_prompt(metadata, "", "{}")
         assert "year" in prompt
         assert "publisher" in prompt

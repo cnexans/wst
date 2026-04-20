@@ -75,11 +75,16 @@ class WstCli(click.Group):
 
 
 @click.group(cls=WstCli)
-@click.option("--backend", "-b", default=None,
-              type=click.Choice(["claude", "codex"], case_sensitive=False),
-              help="AI backend to use (default: claude)")
-@click.option("--model", "-m", "ai_model", default=None,
-              help="AI model to use (e.g. sonnet, opus, gpt-5.4)")
+@click.option(
+    "--backend",
+    "-b",
+    default=None,
+    type=click.Choice(["claude", "codex"], case_sensitive=False),
+    help="AI backend to use (default: claude)",
+)
+@click.option(
+    "--model", "-m", "ai_model", default=None, help="AI model to use (e.g. sonnet, opus, gpt-5.4)"
+)
 @click.option(
     "--format",
     "output_format",
@@ -789,9 +794,14 @@ def show(ctx: click.Context, identifier: str) -> None:
 
 
 @cli.command()
-@click.option("--type", "-t", "doc_type", default=None,
-              type=click.Choice([dt.value for dt in DocType], case_sensitive=False),
-              help="Filter by document type")
+@click.option(
+    "--type",
+    "-t",
+    "doc_type",
+    default=None,
+    type=click.Choice([dt.value for dt in DocType], case_sensitive=False),
+    help="Filter by document type",
+)
 @click.pass_context
 def stats(ctx: click.Context, doc_type: str | None) -> None:
     """Show metadata coverage statistics.
@@ -823,8 +833,18 @@ def stats(ctx: click.Context, doc_type: str | None) -> None:
             )
             return
 
-        fields = ["title", "author", "year", "publisher", "isbn",
-                   "language", "subject", "summary", "table_of_contents", "page_count"]
+        fields = [
+            "title",
+            "author",
+            "year",
+            "publisher",
+            "isbn",
+            "language",
+            "subject",
+            "summary",
+            "table_of_contents",
+            "page_count",
+        ]
 
         # Group by doc_type
         by_type: dict[str, list[LibraryEntry]] = {}
@@ -922,7 +942,7 @@ def _coverage_bar(pct: float, width: int = 15) -> str:
     multiple=True,
     help=(
         "Non-interactive update in key=value form (repeatable). "
-        "Example: --set title=\"New\" --set year=2024"
+        'Example: --set title="New" --set year=2024'
     ),
 )
 @click.option("--yes", "-y", is_flag=True, help="Auto-accept changes without prompting")
@@ -1036,7 +1056,7 @@ def edit(
                     "This command is interactive by default. "
                     "Use --set key=value (and -y) for non-interactive mode."
                 ),
-                details={"hint": "Try: wst edit 1 --set title=\"...\" -y --format json"},
+                details={"hint": 'Try: wst edit 1 --set title="..." -y --format json'},
                 exit_code=2,
             )
 
@@ -1208,9 +1228,7 @@ def _get_missing_fields(m) -> list[str]:
     return [k for k, v in m.model_dump().items() if v is None]
 
 
-def _run_enrich(
-    entry: LibraryEntry, config: WstConfig
-) -> tuple[list[tuple[str, object]], object]:
+def _run_enrich(entry: LibraryEntry, config: WstConfig) -> tuple[list[tuple[str, object]], object]:
     """Run AI enrichment. Returns (changes, enriched_metadata)."""
     m = entry.metadata
     missing = _get_missing_fields(m)
