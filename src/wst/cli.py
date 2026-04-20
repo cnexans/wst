@@ -1,6 +1,8 @@
 import shutil
 import time
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any, TypeVar
 
 import click
 
@@ -11,6 +13,49 @@ from wst.document import extract_doc_info, is_supported
 from wst.ingest import _find_documents, clean_inbox, ingest_files
 from wst.models import DocType, LibraryEntry
 from wst.storage import LocalStorage, build_dest_path
+
+F = TypeVar("F", bound=Callable[..., Any])
+
+FORMAT_CHOICE = click.Choice(["human", "md", "json", "yaml"], case_sensitive=False)
+
+
+def _apply_command_format(
+    ctx: click.Context, param: click.Parameter, value: str | None
+) -> None:
+    """When a subcommand passes --format, override the group default in ctx.obj."""
+    if value is not None:
+        ctx.ensure_object(dict)
+        ctx.obj["format"] = value.lower()
+
+
+def command_format_option() -> Callable[[F], F]:
+    """Add --format to a command so `wst CMD --format json` works (not only `wst --format json CMD`)."""
+
+    def decorator(f: F) -> F:
+        f = click.option(
+            "--format",
+            "_command_format",
+            default=None,
+            type=FORMAT_CHOICE,
+            callback=_apply_command_format,
+            expose_value=False,
+            help=(
+                "Output format for this command (overrides `wst --format`). "
+                "Same as: wst --format yaml <command>"
+            ),
+        )(f)
+        # Common typo (--formate); hidden so normal help stays clean.
+        return click.option(
+            "--formate",
+            "_command_format_typo",
+            default=None,
+            type=FORMAT_CHOICE,
+            callback=_apply_command_format,
+            expose_value=False,
+            hidden=True,
+        )(f)
+
+    return decorator
 
 
 class WstCli(click.Group):
@@ -89,7 +134,7 @@ class WstCli(click.Group):
     "--format",
     "output_format",
     default="human",
-    type=click.Choice(["human", "md", "json", "yaml"], case_sensitive=False),
+    type=FORMAT_CHOICE,
     help="Output format: human (terminal), md, json, yaml (default: human)",
 )
 @click.pass_context
@@ -116,9 +161,15 @@ def cli(
     \b
     Examples:
       wst list
+      wst --format json list
       wst list --format json
       wst show 3 --format yaml
       wst browse --id 3 --action view --format md
+
+    \b
+    Where --format goes:
+      - After `wst`: `wst --format yaml search "foo"` (always works).
+      - After the subcommand: `wst search "foo" --format yaml` (same; each command accepts --format).
     """
     ctx.ensure_object(dict)
     config = WstConfig()
@@ -131,6 +182,7 @@ def cli(
 
 
 @cli.command()
+@command_format_option()
 @click.argument("path", type=click.Path(exists=True, path_type=Path), required=False, default=None)
 @click.option("--confirm", "-c", is_flag=True, help="Manually confirm metadata for each file")
 @click.option("--reprocess", "-r", is_flag=True, help="Re-ingest duplicates with fresh AI metadata")
@@ -257,6 +309,7 @@ def ingest(
 
 
 @cli.group(invoke_without_command=True)
+@command_format_option()
 @click.pass_context
 def backup(ctx: click.Context) -> None:
     """Backup library files to a cloud provider.
@@ -306,6 +359,7 @@ def backup(ctx: click.Context) -> None:
 
 
 @backup.command("icloud")
+@command_format_option()
 @click.argument("identifier", required=False, default=None)
 @click.pass_context
 def backup_icloud(ctx: click.Context, identifier: str | None) -> None:
@@ -353,6 +407,7 @@ def backup_icloud(ctx: click.Context, identifier: str | None) -> None:
 
 
 @backup.command("s3")
+@command_format_option()
 @click.argument("identifier", required=False, default=None)
 @click.option("--configure", is_flag=True, help="Configure S3 credentials")
 @click.pass_context
@@ -430,6 +485,7 @@ def backup_s3(
 
 
 @cli.command()
+@command_format_option()
 @click.option("--id", "doc_id", type=int, default=None, help="Select document by ID")
 @click.option("--title", default=None, help="Select document by exact title")
 @click.option(
@@ -576,6 +632,7 @@ def browse(
 
 
 @cli.command()
+@command_format_option()
 @click.argument(
     "path",
     type=click.Path(exists=True, path_type=Path),
@@ -673,6 +730,7 @@ def _copy_to_inbox(source: Path, inbox: Path) -> list[Path]:
 
 
 @cli.command()
+@command_format_option()
 @click.argument("query", default="")
 @click.option("--author", "-a", default=None, help="Filter by author")
 @click.option("--type", "-t", "doc_type", default=None, help="Filter by document type")
@@ -711,6 +769,7 @@ def search(
 
 
 @cli.command(name="list")
+@command_format_option()
 @click.option("--type", "-t", "doc_type", default=None, help="Filter by document type")
 @click.option(
     "--sort",
@@ -748,6 +807,7 @@ def list_cmd(ctx: click.Context, doc_type: str | None, sort_by: str) -> None:
 
 
 @cli.command()
+@command_format_option()
 @click.argument("identifier")
 @click.pass_context
 def show(ctx: click.Context, identifier: str) -> None:
@@ -794,6 +854,7 @@ def show(ctx: click.Context, identifier: str) -> None:
 
 
 @cli.command()
+@command_format_option()
 @click.option(
     "--type",
     "-t",
@@ -930,6 +991,7 @@ def _coverage_bar(pct: float, width: int = 15) -> str:
 
 
 @cli.command()
+@command_format_option()
 @click.argument("identifier")
 @click.option(
     "--enrich",
@@ -1283,6 +1345,7 @@ def _prompt_doc_type(current: DocType) -> DocType:
 
 
 @cli.command()
+@command_format_option()
 @click.option(
     "--type",
     "doc_type",
