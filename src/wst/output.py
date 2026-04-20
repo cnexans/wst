@@ -59,7 +59,10 @@ def _ok(data: Any) -> dict[str, Any]:
 
 
 def _err(code: str, message: str, details: dict[str, Any] | None) -> dict[str, Any]:
-    return {"ok": False, "error": {"code": code, "message": message, "details": to_payload(details)}}
+    return {
+        "ok": False,
+        "error": {"code": code, "message": message, "details": to_payload(details)},
+    }
 
 
 def render_ok(data: Any, *, fmt: str) -> None:

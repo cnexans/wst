@@ -275,8 +275,10 @@ def backup(ctx: click.Context) -> None:
 
         raise WstError(
             "usage_error",
-            "Interactive backup requires --format human. Use `wst backup icloud|s3` with an identifier, "
-            "or add non-interactive flags.",
+            (
+                "Interactive backup requires --format human. "
+                "Use `wst backup icloud|s3` with an identifier, or add non-interactive flags."
+            ),
             details={"hint": "Try: wst backup s3 3 --format json"},
             exit_code=2,
         )
@@ -1030,7 +1032,10 @@ def edit(
 
             raise WstError(
                 "usage_error",
-                "This command is interactive by default. Use --set key=value (and -y) for non-interactive mode.",
+                (
+                    "This command is interactive by default. "
+                    "Use --set key=value (and -y) for non-interactive mode."
+                ),
                 details={"hint": "Try: wst edit 1 --set title=\"...\" -y --format json"},
                 exit_code=2,
             )
@@ -1199,16 +1204,14 @@ def _apply_metadata_updates(
     return entry, changes
 
 
-def _get_missing_fields(m: "DocumentMetadata") -> list[str]:
+def _get_missing_fields(m) -> list[str]:
     return [k for k, v in m.model_dump().items() if v is None]
 
 
 def _run_enrich(
     entry: LibraryEntry, config: WstConfig
-) -> tuple[list[tuple[str, object]], "DocumentMetadata"]:
+) -> tuple[list[tuple[str, object]], object]:
     """Run AI enrichment. Returns (changes, enriched_metadata)."""
-    from wst.models import DocumentMetadata  # noqa: F811
-
     m = entry.metadata
     missing = _get_missing_fields(m)
 
@@ -1262,12 +1265,27 @@ def _prompt_doc_type(current: DocType) -> DocType:
 
 
 @cli.command()
-@click.option("--type", "doc_type", type=click.Choice([dt.value for dt in DocType], case_sensitive=False), help="Only fix documents of this type")
-@click.option("--field", multiple=True, help="Only fix documents missing this field (e.g. --field isbn --field toc)")
+@click.option(
+    "--type",
+    "doc_type",
+    type=click.Choice([dt.value for dt in DocType], case_sensitive=False),
+    help="Only fix documents of this type",
+)
+@click.option(
+    "--field",
+    multiple=True,
+    help="Only fix documents missing this field (e.g. --field isbn --field toc)",
+)
 @click.option("--yes", "-y", is_flag=True, help="Auto-accept all changes without prompting")
 @click.option("--dry-run", is_flag=True, help="Show what would be enriched without making changes")
 @click.pass_context
-def fix(ctx: click.Context, doc_type: str | None, field: tuple[str, ...], yes: bool, dry_run: bool) -> None:
+def fix(
+    ctx: click.Context,
+    doc_type: str | None,
+    field: tuple[str, ...],
+    yes: bool,
+    dry_run: bool,
+) -> None:
     """Enrich all documents that have missing metadata fields.
 
     \b
