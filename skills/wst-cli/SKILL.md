@@ -1,6 +1,68 @@
-# Skill: wst CLI
+# Skill: biblioteca-digital-wan-shi-tong-wst-cli (wst)
 
 CLI para organizar PDFs/libros con metadata generada por IA, búsqueda full‑text (SQLite FTS) y backups (iCloud/S3).
+
+## Casos de uso (lo que la IA debe hacer)
+
+### Llevar un libro a mi iCloud / iPad
+
+Objetivo: dado un título aproximado, encontrar el libro en la biblioteca y subirlo a iCloud (para que aparezca en iPad).
+
+Flujo recomendado:
+1) Buscar el libro por texto.
+2) Elegir el resultado correcto por **ID**.
+3) Ejecutar backup a iCloud por ID.
+
+Ejemplos:
+
+```bash
+wst search "story teller tactics" --format json
+wst show 12 --format json
+wst backup icloud 12 --format json
+```
+
+Instrucciones humanas típicas:
+- “lleva de mi biblioteca a mi ipad el libro de *Story Teller Tactics*”
+- “pásame a iCloud el libro *Cosmos*”
+
+### Ingestar una carpeta a mi biblioteca
+
+Objetivo: ingestarlo todo desde una carpeta que te indique (por ejemplo Escritorio) y meterlo en la biblioteca.
+
+Ejemplos:
+
+```bash
+wst ingest ~/Desktop --format json
+wst ingest ~/Desktop --ocr --ocr-language spa --format json
+```
+
+Instrucciones humanas típicas:
+- “lleva a mi biblioteca los libros que dejé en mi escritorio”
+- “ingesta la carpeta Descargas a mi biblioteca”
+
+### Corregir la info de un libro con OCR
+
+Objetivo: cuando un PDF escaneado no tiene texto, correr OCR y luego enriquecer/arreglar metadata.
+
+Flujo recomendado (seguro):
+1) OCR del archivo (si aplica).
+2) Identificar el documento en la biblioteca.
+3) Enriquecer metadata en el documento (o en lote con `fix`).
+
+Ejemplos:
+
+```bash
+# 1) OCR al archivo antes de ingestar (si aún no está en la biblioteca)
+wst ingest ~/Desktop/scan.pdf --ocr --ocr-language spa --format json
+
+# 2) Si ya está en la biblioteca, ubícalo por búsqueda y enriquece
+wst search "topologia" --format json
+wst edit 12 --enrich -y --format json
+```
+
+Instrucciones humanas típicas:
+- “corrige la info del libro X y si es escaneado pásale OCR”
+- “¿qué libro de topología tengo en mi biblioteca?”
 
 ## Instalación
 
@@ -57,6 +119,14 @@ wst list --type paper --sort year --format yaml
 ```bash
 wst search "machine learning"
 wst search "cosmos" --author "Sagan" --format json
+```
+
+Ejemplos orientados a preguntas humanas:
+
+```bash
+# “¿Qué libro de topología tengo en mi biblioteca?”
+wst search "topologia" --format json
+wst search "topology" --format json
 ```
 
 ### Mostrar metadata completa
@@ -147,6 +217,7 @@ wst backup icloud "Cosmos" --format yaml
 ## Reglas para IA (operación segura y reproducible)
 
 - Preferir **IDs** (`wst list`/`wst search`) para seleccionar documentos en vez de títulos aproximados.
+- Para instrucciones humanas ambiguas (“llévalo al iPad”), asumir que significa **`backup icloud`**.
 - En `--format md|json|yaml`, evitar cualquier comando que requiera prompts; usar `-y`, `--dry-run`, `--set` según corresponda.
 - Para acciones potencialmente destructivas:
   - usar `--dry-run` primero cuando exista
