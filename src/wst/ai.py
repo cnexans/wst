@@ -93,7 +93,8 @@ metadata as a JSON object matching the schema below.
 
 IMPORTANT:
 - Keep ALL existing values unchanged — do not modify fields that already have values.
-- You MUST use web search to find missing fields. Do NOT guess or return null without searching first.
+- You MUST use web search to find missing fields.
+  Do NOT guess or return null without searching first.
 - For ISBN: search Google Books, Open Library, Amazon, or WorldCat. Try multiple queries:
   - Search by exact title and author
   - Try alternate titles (e.g. translated titles, original language titles)

@@ -325,7 +325,12 @@ def run_action(
     if action in {"open", "find"}:
         file_path = library_path / entry.file_path
         if not file_path.exists():
-            return {"action": action, "status": "failed", "reason": "file not found", "path": str(file_path)}
+            return {
+                "action": action,
+                "status": "failed",
+                "reason": "file not found",
+                "path": str(file_path),
+            }
         cmd: list[str]
         system = platform.system()
         if action == "open":
@@ -345,7 +350,13 @@ def run_action(
 
         if not no_launch:
             subprocess.Popen(cmd)
-        return {"action": action, "status": "ok", "path": entry.file_path, "command": cmd, "launched": (not no_launch)}
+        return {
+            "action": action,
+            "status": "ok",
+            "path": entry.file_path,
+            "command": cmd,
+            "launched": (not no_launch),
+        }
 
     if action == "delete":
         if not yes and not dry_run:
@@ -416,7 +427,11 @@ def run_action(
                 if not dry_run:
                     entry.file_path = new_dest
                     entry.filename = Path(new_dest).name
-                moved = {"from": old_path, "to": new_dest, "note": "old file missing; DB path updated only"}
+                moved = {
+                    "from": old_path,
+                    "to": new_dest,
+                    "note": "old file missing; DB path updated only",
+                }
 
         if not dry_run:
             db.update(entry)
