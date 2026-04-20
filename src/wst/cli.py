@@ -8,7 +8,7 @@ from wst.ai import get_ai_backend
 from wst.config import WstConfig
 from wst.db import Database
 from wst.document import extract_doc_info, is_supported
-from wst.ingest import _find_documents, clean_inbox, format_metadata_display, ingest_files
+from wst.ingest import _find_documents, clean_inbox, ingest_files
 from wst.models import DocType, LibraryEntry
 from wst.storage import LocalStorage, build_dest_path
 
@@ -275,7 +275,8 @@ def backup(ctx: click.Context) -> None:
 
         raise WstError(
             "usage_error",
-            "Interactive backup requires --format human. Use `wst backup icloud|s3` with an identifier, or add non-interactive flags.",
+            "Interactive backup requires --format human. Use `wst backup icloud|s3` with an identifier, "
+            "or add non-interactive flags.",
             details={"hint": "Try: wst backup s3 3 --format json"},
             exit_code=2,
         )
@@ -406,7 +407,8 @@ def backup_s3(
 
                 raise WstError(
                     "requires_interactive",
-                    "Backup provider is not configured. Run `wst backup s3 --configure` in human mode first.",
+                    "Backup provider is not configured. "
+                    "Run `wst backup s3 --configure` in human mode first.",
                     details={"hint": "Try: wst backup s3 --configure --format human"},
                     exit_code=2,
                 )
@@ -423,9 +425,22 @@ def backup_s3(
 @cli.command()
 @click.option("--id", "doc_id", type=int, default=None, help="Select document by ID")
 @click.option("--title", default=None, help="Select document by exact title")
-@click.option("--query", default=None, help="Search query to select a document (uses full-text search)")
-@click.option("--select", type=int, default=None, help="When --query returns multiple results, pick N (1-based)")
-@click.option("--first", is_flag=True, help="When --query returns multiple results, pick the first match")
+@click.option(
+    "--query",
+    default=None,
+    help="Search query to select a document (uses full-text search)",
+)
+@click.option(
+    "--select",
+    type=int,
+    default=None,
+    help="When --query returns multiple results, pick N (1-based)",
+)
+@click.option(
+    "--first",
+    is_flag=True,
+    help="When --query returns multiple results, pick the first match",
+)
 @click.option(
     "--action",
     type=click.Choice(["view", "open", "find", "edit", "delete"], case_sensitive=False),
@@ -435,7 +450,11 @@ def backup_s3(
 @click.option("--set", "set_kv", multiple=True, help="For --action edit: key=value (repeatable)")
 @click.option("--yes", "-y", is_flag=True, help="Auto-accept (delete/edit) without prompting")
 @click.option("--dry-run", is_flag=True, help="Preview (delete/edit) without making changes")
-@click.option("--no-launch", is_flag=True, help="For open/find: don't launch apps; only output command/path")
+@click.option(
+    "--no-launch",
+    is_flag=True,
+    help="For open/find: don't launch apps; only output command/path",
+)
 @click.pass_context
 def browse(
     ctx: click.Context,
@@ -473,7 +492,20 @@ def browse(
     storage = LocalStorage(config.library_path)
 
     try:
-        if fmt == "human" and not any([doc_id, title, query, action, set_kv, yes, dry_run, no_launch, select, first]):
+        if fmt == "human" and not any(
+            [
+                doc_id,
+                title,
+                query,
+                action,
+                set_kv,
+                yes,
+                dry_run,
+                no_launch,
+                select,
+                first,
+            ]
+        ):
             browse_library(db, storage, config.library_path)
             return
 
@@ -877,12 +909,19 @@ def _coverage_bar(pct: float, width: int = 15) -> str:
 
 @cli.command()
 @click.argument("identifier")
-@click.option("--enrich", is_flag=True, help="Use AI to fill missing fields (ISBN, publisher, etc.)")
+@click.option(
+    "--enrich",
+    is_flag=True,
+    help="Use AI to fill missing fields (ISBN, publisher, etc.)",
+)
 @click.option(
     "--set",
     "set_kv",
     multiple=True,
-    help="Non-interactive update in key=value form (repeatable). Example: --set title=\"New\" --set year=2024",
+    help=(
+        "Non-interactive update in key=value form (repeatable). "
+        "Example: --set title=\"New\" --set year=2024"
+    ),
 )
 @click.option("--yes", "-y", is_flag=True, help="Auto-accept changes without prompting")
 @click.option(
