@@ -53,6 +53,7 @@ class TestCLIHelp:
         result = runner.invoke(cli, ["--help"])
         assert result.exit_code == 0
         assert "organize your books and PDFs" in result.output
+        assert "--format" in result.output
 
     def test_ingest_help(self):
         runner = CliRunner()

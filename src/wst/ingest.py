@@ -177,14 +177,35 @@ def ingest_files(
     auto_confirm: bool = False,
     reprocess: bool = False,
     verbose: bool = False,
-) -> tuple[int, int]:
-    """Ingest a list of document files. Returns (processed, ingested) counts."""
+    *,
+    emit: bool = True,
+    progress: bool = True,
+) -> dict:
+    """Ingest a list of document files.
+
+    Returns a dict summary with keys:
+      - processed, ingested, skipped, failed
+      - results: list[IngestResult] (as dataclasses)
+      - elapsed_seconds
+
+    When emit=False, this function produces no stdout/stderr.
+    When progress=False, no carriage-return progress line is printed.
+    """
     if not files:
-        click.echo("No supported files found.")
-        return 0, 0
+        if emit:
+            click.echo("No supported files found.")
+        return {
+            "processed": 0,
+            "ingested": 0,
+            "skipped": 0,
+            "failed": 0,
+            "results": [],
+            "elapsed_seconds": 0.0,
+        }
 
     total = len(files)
-    click.echo(f"Found {total} file(s)")
+    if emit:
+        click.echo(f"Found {total} file(s)")
 
     results: list[IngestResult] = []
     start_time = time.monotonic()
@@ -192,10 +213,10 @@ def ingest_files(
     for i, doc_path in enumerate(files):
         elapsed = time.monotonic() - start_time
 
-        if not verbose:
+        if emit and progress and not verbose:
             _show_progress(i, total, doc_path.name, elapsed)
 
-        if not verbose and not auto_confirm:
+        if emit and progress and not verbose and not auto_confirm:
             # Need to clear progress line before interactive prompt
             _clear_line()
 
@@ -203,7 +224,7 @@ def ingest_files(
         results.append(result)
 
     # Clear progress line
-    if not verbose:
+    if emit and progress and not verbose:
         _clear_line()
 
     # Summary
@@ -212,22 +233,30 @@ def ingest_files(
     skipped = [r for r in results if r.status == "skipped"]
 
     elapsed = time.monotonic() - start_time
-    eta = _format_eta(elapsed)
-    click.echo(
-        f"\nDone in {eta}: {len(ingested)} ingested, {len(skipped)} skipped, {len(failed)} failed"
-    )
+    if emit:
+        eta = _format_eta(elapsed)
+        click.echo(
+            f"\nDone in {eta}: {len(ingested)} ingested, {len(skipped)} skipped, {len(failed)} failed"
+        )
 
-    if failed:
-        click.echo("\nFailed:")
-        for r in failed:
-            click.echo(f"  - {r.filename}: {r.reason}")
+        if failed:
+            click.echo("\nFailed:")
+            for r in failed:
+                click.echo(f"  - {r.filename}: {r.reason}")
 
-    if skipped and verbose:
-        click.echo("\nSkipped:")
-        for r in skipped:
-            click.echo(f"  - {r.filename}: {r.reason}")
+        if skipped and verbose:
+            click.echo("\nSkipped:")
+            for r in skipped:
+                click.echo(f"  - {r.filename}: {r.reason}")
 
-    return total, len(ingested)
+    return {
+        "processed": total,
+        "ingested": len(ingested),
+        "skipped": len(skipped),
+        "failed": len(failed),
+        "results": results,
+        "elapsed_seconds": elapsed,
+    }
 
 
 def clean_inbox(inbox_path: Path) -> int:

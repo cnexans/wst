@@ -13,15 +13,108 @@ from wst.models import DocType, LibraryEntry
 from wst.storage import LocalStorage, build_dest_path
 
 
-@click.group()
+class WstCli(click.Group):
+    def invoke(self, ctx: click.Context) -> object:  # type: ignore[override]
+        try:
+            return super().invoke(ctx)
+        except Exception as e:
+            fmt = None
+            try:
+                fmt = ctx.obj.get("format") if isinstance(ctx.obj, dict) else None
+            except Exception:
+                fmt = None
+
+            if fmt in {"md", "json", "yaml"}:
+                from wst.output import WstError, render_error
+
+                if isinstance(e, WstError):
+                    render_error(
+                        code=e.code,
+                        message=e.message,
+                        details=e.details,
+                        fmt=fmt,
+                    )
+                    raise SystemExit(e.exit_code)
+
+                if isinstance(e, click.UsageError):
+                    render_error(
+                        code="usage_error",
+                        message=e.format_message(),
+                        details={"hint": "See `wst --help` for usage."},
+                        fmt=fmt,
+                    )
+                    raise SystemExit(e.exit_code)
+
+                if isinstance(e, click.ClickException):
+                    render_error(
+                        code="click_error",
+                        message=e.format_message(),
+                        details=None,
+                        fmt=fmt,
+                    )
+                    raise SystemExit(e.exit_code)
+
+                if isinstance(e, SystemExit):
+                    render_error(
+                        code="system_exit",
+                        message="Command failed.",
+                        details={"exit_code": e.code},
+                        fmt=fmt,
+                    )
+                    raise
+
+                render_error(
+                    code="unexpected_error",
+                    message=str(e) or e.__class__.__name__,
+                    details=None,
+                    fmt=fmt,
+                )
+                raise SystemExit(1)
+
+            raise
+
+
+@click.group(cls=WstCli)
 @click.option("--backend", "-b", default=None,
               type=click.Choice(["claude", "codex"], case_sensitive=False),
               help="AI backend to use (default: claude)")
 @click.option("--model", "-m", "ai_model", default=None,
               help="AI model to use (e.g. sonnet, opus, gpt-5.4)")
+@click.option(
+    "--format",
+    "output_format",
+    default="human",
+    type=click.Choice(["human", "md", "json", "yaml"], case_sensitive=False),
+    help="Output format: human (terminal), md, json, yaml (default: human)",
+)
 @click.pass_context
-def cli(ctx: click.Context, backend: str | None, ai_model: str | None) -> None:
-    """wst — organize your books and PDFs."""
+def cli(
+    ctx: click.Context,
+    backend: str | None,
+    ai_model: str | None,
+    output_format: str,
+) -> None:
+    """wst — organize your books and PDFs.
+
+    \b
+    Output formats:
+      - --format human  : terminal-friendly output (default)
+      - --format md     : markdown (machine-friendly, pasteable)
+      - --format json   : structured output for scripts
+      - --format yaml   : structured output for configs/pipelines
+
+    \b
+    Notes:
+      - In machine formats (md/json/yaml), commands do not prompt for input.
+        Use explicit flags (e.g. -y/--yes, --set key=value) or the command will fail.
+
+    \b
+    Examples:
+      wst list
+      wst list --format json
+      wst show 3 --format yaml
+      wst browse --id 3 --action view --format md
+    """
     ctx.ensure_object(dict)
     config = WstConfig()
     if backend:
@@ -29,6 +122,7 @@ def cli(ctx: click.Context, backend: str | None, ai_model: str | None) -> None:
     if ai_model:
         config.ai_model = ai_model
     ctx.obj["config"] = config
+    ctx.obj["format"] = output_format.lower()
 
 
 @cli.command()
@@ -62,6 +156,11 @@ def ingest(
     (copies them to inbox for processing, without touching other inbox files).
 
     \b
+    Machine output:
+      - Use --format json|yaml|md for structured output.
+      - In machine formats, progress bars are disabled and output is emitted once at the end.
+
+    \b
     Examples:
         wst ingest                        # process and clean inbox
         wst ingest ~/Downloads/book.pdf   # ingest a single file
@@ -69,8 +168,10 @@ def ingest(
         wst ingest --keep-inbox           # process inbox without cleaning
         wst ingest -v                     # verbose per-file output
         wst ingest --ocr                  # OCR scanned PDFs before ingesting
+        wst ingest --format json          # structured output
     """
     config: WstConfig = ctx.obj["config"]
+    fmt: str = ctx.obj.get("format", "human")
     config.ensure_dirs()
 
     ai = get_ai_backend(config.ai_backend, config.ai_model)
@@ -78,6 +179,7 @@ def ingest(
     db = Database(config.db_path)
 
     try:
+        removed = 0
         if path is not None:
             copied_files = _copy_to_inbox(path, config.inbox_path)
             if not copied_files:
@@ -93,6 +195,7 @@ def ingest(
                 return
             files_to_process = _find_documents(config.inbox_path)
 
+        ocr_summary = None
         if ocr:
             from wst.ocr import ocr_files as run_ocr_batch
             from wst.ocr import require_ocr_dependencies
@@ -101,16 +204,22 @@ def ingest(
                 return
             pdfs = [f for f in files_to_process if f.suffix.lower() == ".pdf"]
             if pdfs:
-                click.echo("\n--- OCR pass ---")
-                run_ocr_batch(
+                if fmt == "human":
+                    click.echo("\n--- OCR pass ---")
+                ocr_summary = run_ocr_batch(
                     pdfs,
                     language=ocr_language,
                     verbose=verbose,
+                    emit=(fmt == "human"),
+                    progress=(fmt == "human"),
                 )
-                click.echo("")
+                if fmt == "human":
+                    click.echo("")
 
-        click.echo("--- Ingest pass ---")
-        ingest_files(
+        if fmt == "human":
+            click.echo("--- Ingest pass ---")
+
+        ingest_summary = ingest_files(
             files_to_process,
             ai,
             storage,
@@ -118,12 +227,26 @@ def ingest(
             auto_confirm=not confirm,
             reprocess=reprocess,
             verbose=verbose,
+            emit=(fmt == "human"),
+            progress=(fmt == "human"),
         )
 
         if path is None and not keep_inbox:
             removed = clean_inbox(config.inbox_path)
-            if removed > 0:
+            if fmt == "human" and removed > 0:
                 click.echo(f"Cleaned inbox: removed {removed} remaining file(s).")
+
+        if fmt != "human":
+            from wst.output import render_ok
+
+            render_ok(
+                {
+                    "ocr": ocr_summary,
+                    "ingest": ingest_summary,
+                    "cleaned_inbox_removed": removed,
+                },
+                fmt=fmt,
+            )
     finally:
         db.close()
 
@@ -131,13 +254,31 @@ def ingest(
 @cli.group(invoke_without_command=True)
 @click.pass_context
 def backup(ctx: click.Context) -> None:
-    """Backup library files to a cloud provider."""
+    """Backup library files to a cloud provider.
+
+    \b
+    This command is interactive by default.
+    For non-interactive scripting, use subcommands:
+      - wst backup icloud <ID|TITLE>
+      - wst backup s3 <ID|TITLE>
+    """
     from wst.backup import PROVIDERS, run_backup_interactive
 
     if ctx.invoked_subcommand is not None:
         return
 
     config: WstConfig = ctx.obj["config"]
+    fmt: str = ctx.obj.get("format", "human")
+
+    if fmt != "human":
+        from wst.output import WstError
+
+        raise WstError(
+            "usage_error",
+            "Interactive backup requires --format human. Use `wst backup icloud|s3` with an identifier, or add non-interactive flags.",
+            details={"hint": "Try: wst backup s3 3 --format json"},
+            exit_code=2,
+        )
 
     # Interactive provider selection
     from InquirerPy import inquirer
@@ -164,12 +305,39 @@ def backup_icloud(ctx: click.Context, identifier: str | None) -> None:
     from wst.backup import ICloudProvider, run_backup_file, run_backup_interactive
 
     config: WstConfig = ctx.obj["config"]
+    fmt: str = ctx.obj.get("format", "human")
     provider = ICloudProvider()
     db = Database(config.db_path)
 
     try:
+        if fmt != "human" and not identifier:
+            from wst.output import WstError
+
+            raise WstError(
+                "usage_error",
+                "Non-interactive backup requires an IDENTIFIER (ID or exact title).",
+                details={"hint": "Try: wst backup icloud 3 --format json"},
+                exit_code=2,
+            )
+
         if identifier:
-            run_backup_file(provider, db, config.library_path, identifier)
+            if fmt == "human":
+                run_backup_file(provider, db, config.library_path, identifier, emit=True)
+                return
+            if not provider.is_configured():
+                from wst.output import WstError
+
+                raise WstError(
+                    "requires_interactive",
+                    "Backup provider is not configured. Run interactive configuration first.",
+                    details={"hint": "Try: wst backup icloud --format human"},
+                    exit_code=2,
+                )
+            # Avoid stdout contamination from backup module in machine formats
+            run_backup_file(provider, db, config.library_path, identifier, emit=False)
+            from wst.output import render_ok
+
+            render_ok({"provider": "icloud", "identifier": identifier, "status": "ok"}, fmt=fmt)
         else:
             run_backup_interactive(provider, db, config.library_path)
     finally:
@@ -201,16 +369,51 @@ def backup_s3(
     from wst.backup import S3Provider, run_backup_file, run_backup_interactive
 
     config: WstConfig = ctx.obj["config"]
+    fmt: str = ctx.obj.get("format", "human")
     provider = S3Provider()
 
     if configure:
+        if fmt != "human":
+            from wst.output import WstError
+
+            raise WstError(
+                "usage_error",
+                "S3 configuration is interactive. Use --format human.",
+                details={"hint": "Try: wst backup s3 --configure --format human"},
+                exit_code=2,
+            )
         provider.configure()
         return
 
     db = Database(config.db_path)
     try:
+        if fmt != "human" and not identifier:
+            from wst.output import WstError
+
+            raise WstError(
+                "usage_error",
+                "Non-interactive backup requires an IDENTIFIER (ID or exact title).",
+                details={"hint": "Try: wst backup s3 3 --format json"},
+                exit_code=2,
+            )
+
         if identifier:
-            run_backup_file(provider, db, config.library_path, identifier)
+            if fmt == "human":
+                run_backup_file(provider, db, config.library_path, identifier, emit=True)
+                return
+            if not provider.is_configured():
+                from wst.output import WstError
+
+                raise WstError(
+                    "requires_interactive",
+                    "Backup provider is not configured. Run `wst backup s3 --configure` in human mode first.",
+                    details={"hint": "Try: wst backup s3 --configure --format human"},
+                    exit_code=2,
+                )
+            run_backup_file(provider, db, config.library_path, identifier, emit=False)
+            from wst.output import render_ok
+
+            render_ok({"provider": "s3", "identifier": identifier, "status": "ok"}, fmt=fmt)
         else:
             run_backup_interactive(provider, db, config.library_path)
     finally:
@@ -218,17 +421,117 @@ def backup_s3(
 
 
 @cli.command()
+@click.option("--id", "doc_id", type=int, default=None, help="Select document by ID")
+@click.option("--title", default=None, help="Select document by exact title")
+@click.option("--query", default=None, help="Search query to select a document (uses full-text search)")
+@click.option("--select", type=int, default=None, help="When --query returns multiple results, pick N (1-based)")
+@click.option("--first", is_flag=True, help="When --query returns multiple results, pick the first match")
+@click.option(
+    "--action",
+    type=click.Choice(["view", "open", "find", "edit", "delete"], case_sensitive=False),
+    default=None,
+    help="Non-interactive action to run on the selected document",
+)
+@click.option("--set", "set_kv", multiple=True, help="For --action edit: key=value (repeatable)")
+@click.option("--yes", "-y", is_flag=True, help="Auto-accept (delete/edit) without prompting")
+@click.option("--dry-run", is_flag=True, help="Preview (delete/edit) without making changes")
+@click.option("--no-launch", is_flag=True, help="For open/find: don't launch apps; only output command/path")
 @click.pass_context
-def browse(ctx: click.Context) -> None:
-    """Interactive browser for viewing and editing documents."""
-    from wst.browse import browse_library
+def browse(
+    ctx: click.Context,
+    doc_id: int | None,
+    title: str | None,
+    query: str | None,
+    select: int | None,
+    first: bool,
+    action: str | None,
+    set_kv: tuple[str, ...],
+    yes: bool,
+    dry_run: bool,
+    no_launch: bool,
+) -> None:
+    """Browse documents (interactive TUI or non-interactive actions).
+
+    \b
+    Interactive mode:
+      wst browse
+
+    \b
+    Non-interactive mode (scriptable):
+      wst browse --id 3 --action view --format json
+      wst browse --query "Cosmos" --first --action open --no-launch --format yaml
+      wst browse --id 3 --action delete --dry-run --format md
+      wst browse --id 3 --action delete -y --format json
+      wst browse --id 3 --action edit --set title="New" --dry-run --format json
+      wst browse --id 3 --action edit --set title="New" -y --format json
+    """
+    from wst.browse import BrowseUsageError, browse_library, resolve_entry, run_action
 
     config: WstConfig = ctx.obj["config"]
+    fmt: str = ctx.obj.get("format", "human")
     db = Database(config.db_path)
     storage = LocalStorage(config.library_path)
 
     try:
-        browse_library(db, storage, config.library_path)
+        if fmt == "human" and not any([doc_id, title, query, action, set_kv, yes, dry_run, no_launch, select, first]):
+            browse_library(db, storage, config.library_path)
+            return
+
+        if action is None:
+            # Non-interactive selection only is not useful; require an action.
+            from wst.output import WstError
+
+            raise WstError(
+                "usage_error",
+                "Non-interactive browse requires --action plus a selector (--id/--title/--query).",
+                details={"hint": "Try: wst browse --id 3 --action view --format json"},
+                exit_code=2,
+            )
+
+        try:
+            entry = resolve_entry(
+                db,
+                doc_id=doc_id,
+                title=title,
+                query=query,
+                select=select,
+                first=first,
+            )
+        except BrowseUsageError as e:
+            if fmt == "human":
+                raise click.UsageError(str(e))
+            from wst.output import WstError
+
+            raise WstError("usage_error", str(e), exit_code=2)
+
+        set_dict = _parse_set_kv(set_kv) if set_kv else None
+        try:
+            result = run_action(
+                entry,
+                action=action,
+                db=db,
+                storage=storage,
+                library_path=config.library_path,
+                yes=yes,
+                dry_run=dry_run,
+                no_launch=no_launch,
+                set_kv=set_dict,
+            )
+        except BrowseUsageError as e:
+            if fmt == "human":
+                raise click.UsageError(str(e))
+            from wst.output import WstError
+
+            raise WstError("usage_error", str(e), exit_code=2)
+
+        if fmt == "human":
+            # Keep a minimal human output for non-interactive use
+            click.echo(result.get("status") or "ok")
+            return
+
+        from wst.output import render_ok
+
+        render_ok(result, fmt=fmt)
     finally:
         db.close()
 
@@ -256,7 +559,8 @@ def browse(ctx: click.Context) -> None:
     is_flag=True,
     help="Show detailed per-file processing logs",
 )
-def ocr(path: Path, language: str, force: bool, verbose: bool) -> None:
+@click.pass_context
+def ocr(ctx: click.Context, path: Path, language: str, force: bool, verbose: bool) -> None:
     """Run OCR on scanned PDFs to make them searchable.
 
     \b
@@ -271,8 +575,11 @@ def ocr(path: Path, language: str, force: bool, verbose: bool) -> None:
         wst ocr scan.pdf -l eng         # OCR in English
         wst ocr scan.pdf -l spa+eng     # OCR in Spanish and English
         wst ocr scan.pdf --force        # Force OCR even if text exists
+        wst ocr scan.pdf --format json  # structured output
     """
     from wst.ocr import ocr_files as run_ocr_batch
+
+    fmt: str = ctx.obj.get("format", "human")
 
     if path.is_file():
         if path.suffix.lower() != ".pdf":
@@ -288,7 +595,18 @@ def ocr(path: Path, language: str, force: bool, verbose: bool) -> None:
         click.echo("Path must be a file or directory.")
         return
 
-    run_ocr_batch(files, language=language, force=force, verbose=verbose)
+    summary = run_ocr_batch(
+        files,
+        language=language,
+        force=force,
+        verbose=verbose,
+        emit=(fmt == "human"),
+        progress=(fmt == "human"),
+    )
+    if fmt != "human":
+        from wst.output import render_ok
+
+        render_ok(summary, fmt=fmt)
 
 
 def _copy_to_inbox(source: Path, inbox: Path) -> list[Path]:
@@ -330,14 +648,25 @@ def search(
 ) -> None:
     """Search documents by title, author, tags, or subject."""
     config: WstConfig = ctx.obj["config"]
+    fmt: str = ctx.obj.get("format", "human")
     db = Database(config.db_path)
 
     try:
         results = db.search(query, doc_type=doc_type, author=author, subject=subject)
         if not results:
-            click.echo("No results found.")
+            if fmt == "human":
+                click.echo("No results found.")
+                return
+            from wst.output import render_ok
+
+            render_ok([], fmt=fmt)
             return
-        _print_table(results)
+        if fmt == "human":
+            _print_table(results)
+            return
+        from wst.output import render_ok
+
+        render_ok(results, fmt=fmt)
     finally:
         db.close()
 
@@ -356,14 +685,25 @@ def search(
 def list_cmd(ctx: click.Context, doc_type: str | None, sort_by: str) -> None:
     """List all documents in the library."""
     config: WstConfig = ctx.obj["config"]
+    fmt: str = ctx.obj.get("format", "human")
     db = Database(config.db_path)
 
     try:
         entries = db.list_all(doc_type=doc_type, sort_by=sort_by)
         if not entries:
-            click.echo("Library is empty.")
+            if fmt == "human":
+                click.echo("Library is empty.")
+                return
+            from wst.output import render_ok
+
+            render_ok([], fmt=fmt)
             return
-        _print_table(entries)
+        if fmt == "human":
+            _print_table(entries)
+            return
+        from wst.output import render_ok
+
+        render_ok(entries, fmt=fmt)
     finally:
         db.close()
 
@@ -374,13 +714,24 @@ def list_cmd(ctx: click.Context, doc_type: str | None, sort_by: str) -> None:
 def show(ctx: click.Context, identifier: str) -> None:
     """Show full metadata for a document (by ID or title)."""
     config: WstConfig = ctx.obj["config"]
+    fmt: str = ctx.obj.get("format", "human")
     db = Database(config.db_path)
 
     try:
         entry = _find_entry(db, identifier)
         if entry is None:
-            click.echo(f"Document not found: {identifier}")
-            raise SystemExit(1)
+            if fmt == "human":
+                click.echo(f"Document not found: {identifier}")
+                raise SystemExit(1)
+            from wst.output import WstError
+
+            raise WstError("not_found", f"Document not found: {identifier}", exit_code=1)
+
+        if fmt != "human":
+            from wst.output import render_ok
+
+            render_ok(entry, fmt=fmt)
+            return
 
         m = entry.metadata
         click.echo(f"ID:            {entry.id}")
@@ -421,12 +772,21 @@ def stats(ctx: click.Context, doc_type: str | None) -> None:
         wst stats --type textbook
     """
     config: WstConfig = ctx.obj["config"]
+    fmt: str = ctx.obj.get("format", "human")
     db = Database(config.db_path)
 
     try:
         entries = db.list_all(doc_type=doc_type)
         if not entries:
-            click.echo("Library is empty.")
+            if fmt == "human":
+                click.echo("Library is empty.")
+                return
+            from wst.output import render_ok
+
+            render_ok(
+                {"total": 0, "coverage_by_field": [], "breakdown_by_type": []},
+                fmt=fmt,
+            )
             return
 
         fields = ["title", "author", "year", "publisher", "isbn",
@@ -437,6 +797,39 @@ def stats(ctx: click.Context, doc_type: str | None) -> None:
         for e in entries:
             dt = e.metadata.doc_type.value
             by_type.setdefault(dt, []).append(e)
+
+        if fmt != "human":
+            coverage_by_field = []
+            for field in fields:
+                filled = sum(1 for e in entries if _field_filled(e, field))
+                missing = len(entries) - filled
+                pct = (filled / len(entries)) * 100
+                coverage_by_field.append(
+                    {"field": field, "filled": filled, "missing": missing, "coverage_pct": pct}
+                )
+
+            key_fields = ["isbn", "table_of_contents", "year", "publisher", "summary"]
+            breakdown_by_type = []
+            for dt in sorted(by_type):
+                group = by_type[dt]
+                total = len(group)
+                per = {}
+                for f in key_fields:
+                    n = sum(1 for e in group if _field_filled(e, f))
+                    per[f] = (n / total) * 100 if total else 0.0
+                breakdown_by_type.append({"type": dt, "total": total, **per})
+
+            from wst.output import render_ok
+
+            render_ok(
+                {
+                    "total": len(entries),
+                    "coverage_by_field": coverage_by_field,
+                    "breakdown_by_type": breakdown_by_type,
+                },
+                fmt=fmt,
+            )
+            return
 
         # Overall coverage per field
         click.echo(f"\nTotal documents: {len(entries)}\n")
@@ -485,9 +878,28 @@ def _coverage_bar(pct: float, width: int = 15) -> str:
 @cli.command()
 @click.argument("identifier")
 @click.option("--enrich", is_flag=True, help="Use AI to fill missing fields (ISBN, publisher, etc.)")
+@click.option(
+    "--set",
+    "set_kv",
+    multiple=True,
+    help="Non-interactive update in key=value form (repeatable). Example: --set title=\"New\" --set year=2024",
+)
+@click.option("--yes", "-y", is_flag=True, help="Auto-accept changes without prompting")
+@click.option(
+    "--move/--no-move",
+    default=True,
+    help="When metadata changes the destination path, move the file (default: move)",
+)
 @click.pass_context
-def edit(ctx: click.Context, identifier: str, enrich: bool) -> None:
-    """Interactively edit metadata for a document.
+def edit(
+    ctx: click.Context,
+    identifier: str,
+    enrich: bool,
+    set_kv: tuple[str, ...],
+    yes: bool,
+    move: bool,
+) -> None:
+    """Edit metadata for a document (interactive or non-interactive).
 
     \b
     Shows current values and lets you change any field.
@@ -499,26 +911,90 @@ def edit(ctx: click.Context, identifier: str, enrich: bool) -> None:
     publisher, year) using AI and web search.
 
     \b
+    Non-interactive mode:
+      - Use --set key=value (repeatable) and -y to apply.
+      - Without -y, the command performs a dry-run (no changes).
+
+    \b
     Examples:
         wst edit 1
         wst edit "Player's Handbook"
         wst edit 42 --enrich
+        wst edit 42 --enrich -y --format json
+        wst edit 42 --set title="New title" --dry-run --format yaml
+        wst edit 42 --set title="New title" -y --format json
     """
     config: WstConfig = ctx.obj["config"]
+    fmt: str = ctx.obj.get("format", "human")
     db = Database(config.db_path)
     storage = LocalStorage(config.library_path)
 
     try:
         entry = _find_entry(db, identifier)
         if entry is None:
-            click.echo(f"Document not found: {identifier}")
-            raise SystemExit(1)
+            if fmt == "human":
+                click.echo(f"Document not found: {identifier}")
+                raise SystemExit(1)
+            from wst.output import WstError
+
+            raise WstError("not_found", f"Document not found: {identifier}", exit_code=1)
 
         m = entry.metadata
 
         if enrich:
-            _enrich_entry(entry, config, db)
+            if fmt != "human" and not yes:
+                from wst.output import WstError
+
+                raise WstError(
+                    "usage_error",
+                    "Non-interactive enrich requires --yes (or use --format human).",
+                    details={"hint": "Try: wst edit <id> --enrich -y --format json"},
+                    exit_code=2,
+                )
+            _enrich_entry(entry, config, db, confirm=(fmt == "human" and not yes))
+            if fmt != "human":
+                from wst.output import render_ok
+
+                render_ok(entry, fmt=fmt)
             return
+
+        if set_kv:
+            updates = _parse_set_kv(set_kv)
+            updated_entry, changes = _apply_metadata_updates(
+                entry,
+                updates,
+                config=config,
+                db=db,
+                storage=storage,
+                move=move,
+                dry_run=not yes,
+                emit=(fmt == "human"),
+            )
+            if fmt == "human":
+                if not yes:
+                    click.echo("\nDry-run complete (use -y to apply).")
+                return
+            from wst.output import render_ok
+
+            render_ok(
+                {
+                    "applied": bool(yes),
+                    "changes": changes,
+                    "entry": updated_entry,
+                },
+                fmt=fmt,
+            )
+            return
+
+        if fmt != "human":
+            from wst.output import WstError
+
+            raise WstError(
+                "usage_error",
+                "This command is interactive by default. Use --set key=value (and -y) for non-interactive mode.",
+                details={"hint": "Try: wst edit 1 --set title=\"...\" -y --format json"},
+                exit_code=2,
+            )
 
         click.echo(f"\nEditing: {m.title} (ID {entry.id})")
         click.echo("Press Enter to keep current value.\n")
@@ -562,7 +1038,11 @@ def edit(ctx: click.Context, identifier: str, enrich: bool) -> None:
 
 
 def _enrich_entry(
-    entry: LibraryEntry, config: WstConfig, db: Database
+    entry: LibraryEntry,
+    config: WstConfig,
+    db: Database,
+    *,
+    confirm: bool = True,
 ) -> None:
     m = entry.metadata
     missing = _get_missing_fields(m)
@@ -585,13 +1065,99 @@ def _enrich_entry(
         display = value if not isinstance(value, list) else ", ".join(value)
         click.echo(f"    {field}: {display}")
 
-    if not click.confirm("\n  Apply these changes?", default=True):
-        click.echo("  Skipped.")
-        return
+    if confirm:
+        if not click.confirm("\n  Apply these changes?", default=True):
+            click.echo("  Skipped.")
+            return
 
     entry.metadata = enriched
     db.update(entry)
     click.echo("  Updated successfully.")
+
+
+def _parse_set_kv(items: tuple[str, ...]) -> dict[str, str]:
+    updates: dict[str, str] = {}
+    for raw in items:
+        if "=" not in raw:
+            raise click.UsageError(f"Invalid --set value (expected key=value): {raw}")
+        k, v = raw.split("=", 1)
+        k = k.strip()
+        v = v.strip()
+        if not k:
+            raise click.UsageError(f"Invalid --set key: {raw}")
+        updates[k] = v
+    return updates
+
+
+def _apply_metadata_updates(
+    entry: LibraryEntry,
+    updates: dict[str, str],
+    *,
+    config: WstConfig,
+    db: Database,
+    storage: LocalStorage,
+    move: bool,
+    dry_run: bool,
+    emit: bool,
+) -> tuple[LibraryEntry, list[dict[str, object]]]:
+    m = entry.metadata
+    before = m.model_dump()
+
+    for k, v in updates.items():
+        match k:
+            case "title":
+                m.title = v
+            case "author":
+                m.author = v
+            case "type" | "doc_type":
+                m.doc_type = DocType(v)
+            case "year":
+                m.year = int(v) if v else None
+            case "publisher":
+                m.publisher = v or None
+            case "isbn":
+                m.isbn = v or None
+            case "language":
+                m.language = v or None
+            case "subject":
+                m.subject = v or None
+            case "summary":
+                m.summary = v or None
+            case "tags":
+                m.tags = [t.strip() for t in v.split(",") if t.strip()] if v else []
+            case _:
+                raise click.UsageError(f"Unknown metadata field for --set: {k}")
+
+    changes: list[dict[str, object]] = []
+    after = m.model_dump()
+    for k in sorted(after.keys()):
+        if after[k] != before.get(k):
+            changes.append({"field": k, "before": before.get(k), "after": after[k]})
+
+    new_dest = build_dest_path(m)
+    old_path = entry.file_path
+
+    if move and new_dest != old_path:
+        old_full = config.library_path / old_path
+        if old_full.exists():
+            if not dry_run:
+                final = storage.store(old_full, new_dest)
+                old_full.unlink()
+                entry.file_path = final
+                entry.filename = Path(final).name
+            if emit:
+                click.echo(f"\nMoved: {old_path} -> {new_dest}")
+        else:
+            if not dry_run:
+                entry.file_path = new_dest
+                entry.filename = Path(new_dest).name
+            if emit:
+                click.echo(f"\nWarning: old file not found at {old_path}, updated path in DB only.")
+
+    if not dry_run:
+        db.update(entry)
+
+    return entry, changes
 
 
 def _get_missing_fields(m: "DocumentMetadata") -> list[str]:
@@ -677,11 +1243,14 @@ def fix(ctx: click.Context, doc_type: str | None, field: tuple[str, ...], yes: b
         wst fix --field isbn --field toc
         wst fix --dry-run               # preview what needs fixing
         wst fix --type novel -y         # fix all novels, auto-accept
+        wst fix --dry-run --format json # preview as structured output
+        wst fix -y --format yaml        # run non-interactively
     """
     field_map = {"toc": "table_of_contents"}
     target_fields = [field_map.get(f, f) for f in field] if field else None
 
     config: WstConfig = ctx.obj["config"]
+    fmt: str = ctx.obj.get("format", "human")
     db = Database(config.db_path)
 
     try:
@@ -697,62 +1266,148 @@ def fix(ctx: click.Context, doc_type: str | None, field: tuple[str, ...], yes: b
                 to_fix.append((entry, missing))
 
         if not to_fix:
-            click.echo("All documents are complete. Nothing to fix.")
+            if fmt == "human":
+                click.echo("All documents are complete. Nothing to fix.")
+                return
+            from wst.output import render_ok
+
+            render_ok(
+                {
+                    "scanned": len(entries),
+                    "to_fix": 0,
+                    "fixed": 0,
+                    "skipped": 0,
+                    "failed": 0,
+                    "results": [],
+                },
+                fmt=fmt,
+            )
             return
 
-        click.echo(f"Found {len(to_fix)} document(s) with missing fields.\n")
+        if fmt != "human" and not dry_run and not yes:
+            from wst.output import WstError
+
+            raise WstError(
+                "usage_error",
+                "Non-interactive fix requires -y/--yes (or use --dry-run).",
+                details={"hint": "Try: wst fix -y --format json"},
+                exit_code=2,
+            )
+
+        if fmt == "human":
+            click.echo(f"Found {len(to_fix)} document(s) with missing fields.\n")
 
         if dry_run:
-            click.echo(f"{'ID':>4}  {'Title':<40}  {'Type':<12}  Missing fields")
-            click.echo("-" * 90)
+            preview = []
             for entry, missing in to_fix:
                 m = entry.metadata
-                title = m.title[:38] + ".." if len(m.title) > 40 else m.title
-                click.echo(f"{entry.id:>4}  {title:<40}  {m.doc_type.value:<12}  {', '.join(missing)}")
+                preview.append(
+                    {
+                        "id": entry.id,
+                        "title": m.title,
+                        "type": m.doc_type.value,
+                        "missing_fields": missing,
+                    }
+                )
+            if fmt == "human":
+                click.echo(f"{'ID':>4}  {'Title':<40}  {'Type':<12}  Missing fields")
+                click.echo("-" * 90)
+                for entry, missing in to_fix:
+                    m = entry.metadata
+                    title = m.title[:38] + ".." if len(m.title) > 40 else m.title
+                    click.echo(
+                        f"{entry.id:>4}  {title:<40}  {m.doc_type.value:<12}  {', '.join(missing)}"
+                    )
+                return
+            from wst.output import render_ok
+
+            render_ok(
+                {
+                    "scanned": len(entries),
+                    "to_fix": len(to_fix),
+                    "preview": preview,
+                },
+                fmt=fmt,
+            )
             return
 
         fixed = 0
         failed = 0
         skipped = 0
         start = time.monotonic()
+        results = []
 
         for i, (entry, missing) in enumerate(to_fix, 1):
             m = entry.metadata
-            click.echo(f"\n[{i}/{len(to_fix)}] {m.title} (ID {entry.id})")
-            click.echo(f"  Missing: {', '.join(missing)}")
+            if fmt == "human":
+                click.echo(f"\n[{i}/{len(to_fix)}] {m.title} (ID {entry.id})")
+                click.echo(f"  Missing: {', '.join(missing)}")
 
             try:
                 changes, enriched = _run_enrich(entry, config)
             except Exception as e:
-                click.echo(f"  Error: {e}")
+                if fmt == "human":
+                    click.echo(f"  Error: {e}")
                 failed += 1
+                results.append(
+                    {
+                        "id": entry.id,
+                        "status": "failed",
+                        "error": str(e),
+                    }
+                )
                 continue
 
             if not changes:
-                click.echo("  No new information found.")
+                if fmt == "human":
+                    click.echo("  No new information found.")
                 skipped += 1
+                results.append({"id": entry.id, "status": "skipped", "changes": []})
                 continue
 
-            click.echo("  Found:")
-            for f_name, value in changes:
-                display = value if not isinstance(value, list) else ", ".join(value)
-                # Truncate long values like TOC for display
-                if isinstance(display, str) and len(display) > 80:
-                    display = display[:77] + "..."
-                click.echo(f"    {f_name}: {display}")
+            if fmt == "human":
+                click.echo("  Found:")
+                for f_name, value in changes:
+                    display = value if not isinstance(value, list) else ", ".join(value)
+                    # Truncate long values like TOC for display
+                    if isinstance(display, str) and len(display) > 80:
+                        display = display[:77] + "..."
+                    click.echo(f"    {f_name}: {display}")
 
-            if not yes:
+            if fmt == "human" and not yes:
                 if not click.confirm("  Apply?", default=True):
                     skipped += 1
+                    results.append({"id": entry.id, "status": "skipped", "changes": changes})
                     continue
 
             entry.metadata = enriched
             db.update(entry)
             fixed += 1
-            click.echo("  Updated.")
+            results.append({"id": entry.id, "status": "fixed", "changes": changes})
+            if fmt == "human":
+                click.echo("  Updated.")
 
         elapsed = time.monotonic() - start
-        click.echo(f"\nDone in {int(elapsed)}s: {fixed} fixed, {skipped} skipped, {failed} failed")
+        if fmt == "human":
+            click.echo(
+                f"\nDone in {int(elapsed)}s: {fixed} fixed, {skipped} skipped, {failed} failed"
+            )
+            return
+
+        from wst.output import render_ok
+
+        render_ok(
+            {
+                "scanned": len(entries),
+                "to_fix": len(to_fix),
+                "fixed": fixed,
+                "skipped": skipped,
+                "failed": failed,
+                "elapsed_seconds": elapsed,
+                "results": results,
+            },
+            fmt=fmt,
+        )
     finally:
         db.close()
 
