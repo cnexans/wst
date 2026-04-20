@@ -236,10 +236,8 @@ def ingest_files(
     if emit:
         eta = _format_eta(elapsed)
         click.echo(
-            (
-                f"\nDone in {eta}: "
-                f"{len(ingested)} ingested, {len(skipped)} skipped, {len(failed)} failed"
-            )
+            f"\nDone in {eta}: "
+            f"{len(ingested)} ingested, {len(skipped)} skipped, {len(failed)} failed"
         )
 
         if failed:
