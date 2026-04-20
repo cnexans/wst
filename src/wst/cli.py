@@ -19,9 +19,7 @@ F = TypeVar("F", bound=Callable[..., Any])
 FORMAT_CHOICE = click.Choice(["human", "md", "json", "yaml"], case_sensitive=False)
 
 
-def _apply_command_format(
-    ctx: click.Context, param: click.Parameter, value: str | None
-) -> None:
+def _apply_command_format(ctx: click.Context, param: click.Parameter, value: str | None) -> None:
     """When a subcommand passes --format, override the group default in ctx.obj."""
     if value is not None:
         ctx.ensure_object(dict)
@@ -29,7 +27,7 @@ def _apply_command_format(
 
 
 def command_format_option() -> Callable[[F], F]:
-    """Add --format to a command so `wst CMD --format json` works (not only `wst --format json CMD`)."""
+    """Add --format on subcommands (not only `wst --format … CMD`)."""
 
     def decorator(f: F) -> F:
         f = click.option(
@@ -169,7 +167,8 @@ def cli(
     \b
     Where --format goes:
       - After `wst`: `wst --format yaml search "foo"` (always works).
-      - After the subcommand: `wst search "foo" --format yaml` (same; each command accepts --format).
+      - After the subcommand: `wst search "foo" --format yaml`
+        (same; each command accepts --format).
     """
     ctx.ensure_object(dict)
     config = WstConfig()
