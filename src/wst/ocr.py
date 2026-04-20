@@ -166,17 +166,43 @@ def ocr_files(
     language: str = "spa",
     force: bool = False,
     verbose: bool = False,
-) -> list[OcrResult]:
-    """Run OCR on a list of PDF files with progress display."""
+    *,
+    emit: bool = True,
+    progress: bool = True,
+) -> dict:
+    """Run OCR on a list of PDF files.
+
+    Returns a dict summary with keys:
+      - processed, skipped, failed
+      - results: list[OcrResult]
+      - elapsed_seconds
+
+    When emit=False, this function produces no stdout/stderr.
+    When progress=False, no carriage-return progress line is printed.
+    """
     if not files:
-        click.echo("No PDF files found.")
-        return []
+        if emit:
+            click.echo("No PDF files found.")
+        return {
+            "processed": 0,
+            "skipped": 0,
+            "failed": 0,
+            "results": [],
+            "elapsed_seconds": 0.0,
+        }
 
     if not require_ocr_dependencies():
-        return []
+        return {
+            "processed": 0,
+            "skipped": 0,
+            "failed": 0,
+            "results": [],
+            "elapsed_seconds": 0.0,
+        }
 
     total = len(files)
-    click.echo(f"Found {total} PDF(s) to process (language: {language})")
+    if emit:
+        click.echo(f"Found {total} PDF(s) to process (language: {language})")
 
     results: list[OcrResult] = []
     start_time = time.monotonic()
@@ -184,16 +210,16 @@ def ocr_files(
     for i, pdf_path in enumerate(files):
         elapsed = time.monotonic() - start_time
 
-        if not verbose:
+        if emit and progress and not verbose:
             _show_progress(i, total, pdf_path.name, elapsed)
 
-        if verbose:
+        if emit and verbose:
             click.echo(f"\nProcessing: {pdf_path.name}")
 
         result = run_ocr(pdf_path, language=language, force=force)
         results.append(result)
 
-        if verbose:
+        if emit and verbose:
             if result.status == "processed":
                 click.echo(f"  OCR complete: {pdf_path.name}")
             elif result.status == "skipped":
@@ -201,7 +227,7 @@ def ocr_files(
             else:
                 click.echo(f"  Failed: {result.reason}")
 
-    if not verbose:
+    if emit and progress and not verbose:
         _clear_line()
 
     # Summary
@@ -210,16 +236,23 @@ def ocr_files(
     failed = [r for r in results if r.status == "failed"]
 
     elapsed = time.monotonic() - start_time
-    eta = _format_eta(elapsed)
-    click.echo(
-        f"\nOCR done in {eta}: "
-        f"{len(processed)} processed, {len(skipped)} skipped, "
-        f"{len(failed)} failed"
-    )
+    if emit:
+        eta = _format_eta(elapsed)
+        click.echo(
+            f"\nOCR done in {eta}: "
+            f"{len(processed)} processed, {len(skipped)} skipped, "
+            f"{len(failed)} failed"
+        )
 
-    if failed:
-        click.echo("\nFailed:")
-        for r in failed:
-            click.echo(f"  - {r.filename}: {r.reason}")
+        if failed:
+            click.echo("\nFailed:")
+            for r in failed:
+                click.echo(f"  - {r.filename}: {r.reason}")
 
-    return results
+    return {
+        "processed": len(processed),
+        "skipped": len(skipped),
+        "failed": len(failed),
+        "results": results,
+        "elapsed_seconds": elapsed,
+    }

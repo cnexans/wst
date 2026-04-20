@@ -3,6 +3,7 @@ import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
 
+import click
 from InquirerPy import inquirer
 
 from wst.db import Database
@@ -36,7 +37,7 @@ class BackupProvider(ABC):
         ...
 
     @abstractmethod
-    def backup_all(self, library_path: Path) -> int:
+    def backup_all(self, library_path: Path, *, emit: bool = True) -> int:
         """Backup entire library. Returns number of files backed up."""
         ...
 
@@ -64,13 +65,13 @@ class ICloudProvider(BackupProvider):
         if not self.is_configured():
             system = platform.system()
             if system == "Darwin":
-                print("iCloud Drive not found.")
-                print("Enable it in System Settings > Apple ID > iCloud.")
+                click.echo("iCloud Drive not found.")
+                click.echo("Enable it in System Settings > Apple ID > iCloud.")
             elif system == "Windows":
-                print("iCloud Drive not found.")
-                print("Install iCloud for Windows from the Microsoft Store.")
+                click.echo("iCloud Drive not found.")
+                click.echo("Install iCloud for Windows from the Microsoft Store.")
             else:
-                print(f"iCloud Drive is not supported on {system}.")
+                click.echo(f"iCloud Drive is not supported on {system}.")
             return
 
         subfolder = (
@@ -85,30 +86,34 @@ class ICloudProvider(BackupProvider):
         self.subfolder = subfolder
         self.dest_root = self.icloud_base / subfolder
         self.dest_root.mkdir(parents=True, exist_ok=True)
-        print(f"Configured: {self.dest_root}")
+        click.echo(f"Configured: {self.dest_root}")
 
     def backup_file(self, source: Path, dest_relative: str) -> None:
         dest = self.dest_root / dest_relative
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(str(source), str(dest))
 
-    def backup_all(self, library_path: Path) -> int:
+    def backup_all(self, library_path: Path, *, emit: bool = True) -> int:
         from wst.document import is_supported
 
         count = 0
         for pdf in sorted(p for p in library_path.rglob("*") if p.is_file() and is_supported(p)):
             relative = str(pdf.relative_to(library_path))
-            print(f"  {relative}...", end=" ", flush=True)
+            if emit:
+                click.echo(f"  {relative}... ", nl=False)
             self.backup_file(pdf, relative)
-            print("done")
+            if emit:
+                click.echo("done")
             count += 1
 
         # Backup the database too
         db_path = library_path / "wst.db"
         if db_path.exists():
-            print("  wst.db...", end=" ", flush=True)
+            if emit:
+                click.echo("  wst.db... ", nl=False)
             self.backup_file(db_path, "wst.db")
-            print("done")
+            if emit:
+                click.echo("done")
 
         return count
 
@@ -134,7 +139,7 @@ class S3Provider(BackupProvider):
         try:
             import boto3
         except ImportError:
-            print(
+            click.echo(
                 "Error: S3 backup requires the 's3' extra. Install it with:\n"
                 "\n"
                 "  pip install wst-library[s3]\n"
@@ -166,20 +171,20 @@ class S3Provider(BackupProvider):
         try:
             import boto3  # noqa: F401
         except ImportError:
-            print(
+            click.echo(
                 "Error: S3 backup requires the 's3' extra. Install it with:\n"
                 "\n"
                 "  pip install wst-library[s3]\n"
             )
             return
 
-        print("\n--- S3 Backup Configuration ---")
-        print("Enter your S3 bucket credentials.")
-        print("These are stored locally in ~/wst/config.json\n")
+        click.echo("\n--- S3 Backup Configuration ---")
+        click.echo("Enter your S3 bucket credentials.")
+        click.echo("These are stored locally in ~/wst/config.json\n")
 
         bucket = inquirer.text(message="Bucket name:").execute().strip()
         if not bucket:
-            print("Bucket name is required.")
+            click.echo("Bucket name is required.")
             return
 
         region = (
@@ -227,7 +232,7 @@ class S3Provider(BackupProvider):
         )
 
         if not access_key_id or not secret_access_key:
-            print("Access Key ID and Secret Access Key are required.")
+            click.echo("Access Key ID and Secret Access Key are required.")
             return
 
         save_s3_config(
@@ -246,10 +251,10 @@ class S3Provider(BackupProvider):
         if client:
             try:
                 client.head_bucket(Bucket=bucket)
-                print(f"\nConfigured and verified: s3://{bucket}")
+                click.echo(f"\nConfigured and verified: s3://{bucket}")
             except Exception as e:
-                print(f"\nConfiguration saved, but connection test failed: {e}")
-                print("Check your credentials and bucket name.")
+                click.echo(f"\nConfiguration saved, but connection test failed: {e}")
+                click.echo("Check your credentials and bucket name.")
 
     def _key(self, dest_relative: str) -> str:
         cfg = self._get_config() or {}
@@ -266,7 +271,7 @@ class S3Provider(BackupProvider):
         key = self._key(dest_relative)
         client.upload_file(str(source), cfg["bucket"], key)
 
-    def backup_all(self, library_path: Path) -> int:
+    def backup_all(self, library_path: Path, *, emit: bool = True) -> int:
         from wst.document import is_supported
 
         client = self._get_client()
@@ -276,17 +281,21 @@ class S3Provider(BackupProvider):
         count = 0
         for f in sorted(p for p in library_path.rglob("*") if p.is_file() and is_supported(p)):
             relative = str(f.relative_to(library_path))
-            print(f"  {relative}...", end=" ", flush=True)
+            if emit:
+                click.echo(f"  {relative}... ", nl=False)
             self.backup_file(f, relative)
-            print("done")
+            if emit:
+                click.echo("done")
             count += 1
 
         # Backup the database too
         db_path = library_path / "wst.db"
         if db_path.exists():
-            print("  wst.db...", end=" ", flush=True)
+            if emit:
+                click.echo("  wst.db... ", nl=False)
             self.backup_file(db_path, "wst.db")
-            print("done")
+            if emit:
+                click.echo("done")
 
         return count
 
@@ -318,7 +327,7 @@ def run_backup_interactive(
 ) -> None:
     """Interactive backup flow: choose all or select a file."""
     if not provider.is_configured():
-        print(f"Provider '{provider.name}' is not configured.")
+        click.echo(f"Provider '{provider.name}' is not configured.")
         provider.configure()
         if not provider.is_configured():
             return
@@ -332,13 +341,13 @@ def run_backup_interactive(
     ).execute()
 
     if choice == "all":
-        print(f"\nBacking up to {provider.name}...")
-        count = provider.backup_all(library_path)
-        print(f"\n{count} file(s) backed up.")
+        click.echo(f"\nBacking up to {provider.name}...")
+        count = provider.backup_all(library_path, emit=True)
+        click.echo(f"\n{count} file(s) backed up.")
     else:
         entries = db.list_all()
         if not entries:
-            print("Library is empty.")
+            click.echo("Library is empty.")
             return
 
         choices = [{"name": "Cancel", "value": None}] + [
@@ -359,12 +368,12 @@ def run_backup_interactive(
 
         source = library_path / entry.file_path
         if not source.exists():
-            print(f"File not found: {source}")
+            click.echo(f"File not found: {source}")
             return
 
-        print(f"Backing up: {entry.file_path}...", end=" ", flush=True)
+        click.echo(f"Backing up: {entry.file_path}... ", nl=False)
         provider.backup_file(source, entry.file_path)
-        print("done")
+        click.echo("done")
 
 
 def run_backup_file(
@@ -372,10 +381,13 @@ def run_backup_file(
     db: Database,
     library_path: Path,
     identifier: str,
+    *,
+    emit: bool = True,
 ) -> None:
     """Backup a specific file by ID or title."""
     if not provider.is_configured():
-        print(f"Provider '{provider.name}' is not configured.")
+        if emit:
+            click.echo(f"Provider '{provider.name}' is not configured.")
         provider.configure()
         if not provider.is_configured():
             return
@@ -386,14 +398,30 @@ def run_backup_file(
     if entry is None:
         entry = db.get_by_title(identifier)
     if entry is None:
-        print(f"Document not found: {identifier}")
+        if emit:
+            click.echo(f"Document not found: {identifier}")
         return
 
     source = library_path / entry.file_path
     if not source.exists():
-        print(f"File not found: {source}")
+        if emit:
+            click.echo(f"File not found: {source}")
         return
 
-    print(f"Backing up: {entry.file_path}...", end=" ", flush=True)
+    if emit:
+        click.echo(f"Backing up: {entry.file_path}... ", nl=False)
     provider.backup_file(source, entry.file_path)
-    print("done")
+    if emit:
+        click.echo("done")
+
+
+def run_backup_all(
+    provider: BackupProvider,
+    library_path: Path,
+    *,
+    emit: bool = True,
+) -> dict:
+    if not provider.is_configured():
+        raise RuntimeError(f"Provider '{provider.name}' is not configured.")
+    count = provider.backup_all(library_path, emit=emit)
+    return {"provider": provider.name, "backed_up_files": count}
