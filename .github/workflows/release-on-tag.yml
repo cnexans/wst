@@ -1,0 +1,42 @@
+# From v0.8.2 onward: push an annotated tag 'vX.Y.Z' matching pyproject.toml to run tests,
+# publish to PyPI, optional Chocolatey, and create/update the GitHub Release.
+
+name: Release on tag
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write
+
+jobs:
+  prep:
+    runs-on: ubuntu-latest
+    outputs:
+      semver: ${{ steps.meta.outputs.semver }}
+    steps:
+      - name: Strip v prefix for reusable workflow
+        id: meta
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          SEMVER="${TAG#v}"
+          echo "semver=$SEMVER" >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: prep
+    uses: ./.github/workflows/release.yml
+    with:
+      version: ${{ needs.prep.outputs.semver }}
+    secrets: inherit
+
+  github-release:
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
