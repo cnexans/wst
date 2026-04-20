@@ -66,6 +66,7 @@ class TestCLIHelp:
         result = runner.invoke(cli, ["search", "--help"])
         assert result.exit_code == 0
         assert "--author" in result.output
+        assert "--format" in result.output
 
     def test_list_help(self):
         runner = CliRunner()

@@ -30,14 +30,15 @@ def to_payload(obj: Any) -> Any:
     if obj is None:
         return None
 
+    # StrEnum is a str subclass; handle Enum before str so we emit plain strings for YAML/JSON.
+    if isinstance(obj, Enum):
+        return obj.value
+
     if isinstance(obj, (str, int, float, bool)):
         return obj
 
     if isinstance(obj, Path):
         return str(obj)
-
-    if isinstance(obj, Enum):
-        return obj.value
 
     if dataclasses.is_dataclass(obj):
         return {k: to_payload(v) for k, v in dataclasses.asdict(obj).items()}
