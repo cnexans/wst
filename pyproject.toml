@@ -1,6 +1,6 @@
 [project]
 name = "wst-library"
-version = "0.7.0"
+version = "0.8.0"
 description = "CLI tool for organizing books and PDFs with AI-powered metadata"
 readme = "README.md"
 license = "LicenseRef-Proprietary"
