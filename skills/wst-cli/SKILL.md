@@ -1,3 +1,8 @@
+---
+name: wst-cli
+description: CLI para organizar PDFs y libros con metadata generada por IA, búsqueda full-text (SQLite FTS5) y backups a iCloud o S3. Úsala cuando el usuario pida buscar, mostrar, ingestar o respaldar libros/PDFs en su biblioteca wst — por ejemplo "pasame tal libro a mi iPad", "ingestá esta carpeta a mi biblioteca", "mostrame qué libros tengo de Sagan", "hacé backup a iCloud del libro 12".
+---
+
 # Skill: biblioteca-digital-wan-shi-tong-wst-cli (wst)
 
 CLI para organizar PDFs/libros con metadata generada por IA, búsqueda full‑text (SQLite FTS) y backups (iCloud/S3).
