@@ -19,7 +19,9 @@ from wst.db import Database
 # ---------------------------------------------------------------------------
 
 
-def _build_cluster_naming_prompt(cluster_docs: list[dict], used_names: list[str] | None = None) -> str:
+def _build_cluster_naming_prompt(
+    cluster_docs: list[dict], used_names: list[str] | None = None
+) -> str:
     """Build a prompt asking Claude to name a cluster of documents."""
     docs_str = json.dumps(cluster_docs, ensure_ascii=False, indent=2)
     used_names_section = ""
