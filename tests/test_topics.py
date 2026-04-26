@@ -219,13 +219,14 @@ class TestBuildVocabulary:
         }
 
     def test_empty_library_returns_empty(self, db):
-        """build_vocabulary on empty DB returns empty list without touching ML deps."""
+        """build_vocabulary on empty DB returns empty tuple without touching ML deps."""
         from wst.topics import build_vocabulary
 
         ai = _mock_ai("Cálculo")
         with patch.dict(sys.modules, self._fake_modules()):
-            result = build_vocabulary(db, ai)
-        assert result == []
+            vocab, rep_docs = build_vocabulary(db, ai)
+        assert vocab == []
+        assert rep_docs == {}
 
     def test_raises_on_missing_deps(self, db):
         """build_vocabulary raises RuntimeError when sentence-transformers is missing."""
@@ -246,15 +247,19 @@ class TestBuildVocabulary:
         db.insert(_make_entry(title="Literatura Fantástica", tags=["Tolkien"], file_hash="h3"))
 
         # Mock the entire function to avoid heavy ML dependencies in CI
-        with patch("wst.topics.build_vocabulary", return_value=["Matemáticas", "Literatura"]):
+        with patch(
+            "wst.topics.build_vocabulary",
+            return_value=(["Matemáticas", "Literatura"], {}),
+        ):
             from wst.topics import build_vocabulary
 
             ai = _mock_ai("Matemáticas")
-            vocab = build_vocabulary(db, ai, n_topics=2)
+            vocab, rep_docs = build_vocabulary(db, ai, n_topics=2)
 
         assert isinstance(vocab, list)
         assert len(vocab) == 2
         assert "Matemáticas" in vocab
+        assert isinstance(rep_docs, dict)
 
 
 # ---------------------------------------------------------------------------
@@ -628,7 +633,7 @@ class TestTopicsBuildNonInteractive:
         runner = CliRunner()
         with (
             patch("wst.cli.WstConfig", return_value=cfg),
-            patch("wst.topics.build_vocabulary", return_value=fake_vocab),
+            patch("wst.topics.build_vocabulary", return_value=(fake_vocab, {})),
             patch("wst.topics.assign_topics", return_value={1: ["Matemáticas"], 2: ["Ciencias"]}),
             patch("wst.topics.save_vocabulary") as mock_save,
         ):
@@ -650,7 +655,7 @@ class TestTopicsBuildNonInteractive:
         runner = CliRunner()
         with (
             patch("wst.cli.WstConfig", return_value=cfg),
-            patch("wst.topics.build_vocabulary", return_value=fake_vocab),
+            patch("wst.topics.build_vocabulary", return_value=(fake_vocab, {})),
             patch("wst.topics.assign_topics", return_value={1: ["Física"], 2: ["Literatura"]}),
             patch("wst.topics.save_vocabulary") as mock_save,
         ):

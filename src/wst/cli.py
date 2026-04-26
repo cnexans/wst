@@ -1655,7 +1655,7 @@ def topics_build(ctx: click.Context, n_topics: int | None, yes: bool) -> None:
 
         if fmt == "human":
             click.echo("Step 1/3  Embedding documents and clustering...")
-        vocabulary = build_vocabulary(db, ai, n_topics=n_topics)
+        vocabulary, representative_docs = build_vocabulary(db, ai, n_topics=n_topics)
 
         if not vocabulary:
             if fmt == "human":
@@ -1671,7 +1671,7 @@ def topics_build(ctx: click.Context, n_topics: int | None, yes: bool) -> None:
 
         # --- Interactive review/edit (human mode without -y) ---
         if fmt == "human" and not yes:
-            vocabulary = _review_vocabulary_interactive(vocabulary)
+            vocabulary = _review_vocabulary_interactive(vocabulary, representative_docs)
             if vocabulary is None:
                 click.echo("Cancelado.")
                 return
@@ -1842,16 +1842,31 @@ def topics_assign(ctx: click.Context, doc_id: int | None, yes: bool) -> None:
         db.close()
 
 
-def _review_vocabulary_interactive(vocabulary: list[str]) -> list[str] | None:
+def _review_vocabulary_interactive(
+    vocabulary: list[str],
+    representative_docs: dict[int, list[str]] | None = None,
+) -> list[str] | None:
     """Show the generated vocabulary and let the user confirm, cancel, or edit topics.
+
+    Args:
+        vocabulary: The list of topic names to review.
+        representative_docs: Optional mapping of cluster index (0-based) to a list of
+            up to 3 representative document titles for that cluster.
 
     Returns the (possibly edited) vocabulary list, or None if the user cancelled.
     """
+    rep_docs = representative_docs or {}
+
     while True:
-        click.echo(f"\nTópicos generados ({len(vocabulary)}):")
+        click.echo(f"\nTópicos generados ({len(vocabulary)}):\n")
         for i, topic in enumerate(vocabulary, 1):
-            click.echo(f"  {i:>3}. {topic}")
-        click.echo("")
+            cluster_idx = i - 1
+            docs = rep_docs.get(cluster_idx, [])
+            click.echo(f"  {i}. {topic}")
+            for doc_title in docs:
+                click.echo(f"     • {doc_title}")
+            if docs:
+                click.echo("")
 
         raw = input("¿Aceptás estos tópicos? [S/n/editar número]: ").strip()
 
@@ -1864,12 +1879,18 @@ def _review_vocabulary_interactive(vocabulary: list[str]) -> list[str] | None:
         if raw.isdigit():
             idx = int(raw)
             if 1 <= idx <= len(vocabulary):
-                current = vocabulary[idx - 1]
-                click.echo(f'Tópico {idx} actual: "{current}"')
+                cluster_idx = idx - 1
+                current = vocabulary[cluster_idx]
+                docs = rep_docs.get(cluster_idx, [])
+                click.echo(f'\nTópico {idx} actual: "{current}"')
+                if docs:
+                    click.echo("  Documentos representativos:")
+                    for doc_title in docs:
+                        click.echo(f"    • {doc_title}")
                 new_name = input("Nuevo nombre (Enter para mantener): ").strip()
                 if new_name:
                     vocabulary = list(vocabulary)
-                    vocabulary[idx - 1] = new_name
+                    vocabulary[cluster_idx] = new_name
             else:
                 click.echo(f"Número fuera de rango. Ingresá un número entre 1 y {len(vocabulary)}.")
         else:

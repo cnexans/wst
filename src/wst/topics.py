@@ -95,7 +95,7 @@ def build_vocabulary(
     db: Database,
     ai_backend: AIBackend,
     n_topics: int | None = None,
-) -> list[str]:
+) -> tuple[list[str], dict[int, list[str]]]:
     """Generate a topic vocabulary from the document corpus.
 
     Steps:
@@ -105,7 +105,10 @@ def build_vocabulary(
       4. KMeans clustering.
       5. For each cluster, name it via AI.
 
-    Returns a list of topic name strings (the vocabulary).
+    Returns a tuple (vocabulary, representative_docs) where:
+      - vocabulary is a list of topic name strings.
+      - representative_docs is a dict mapping cluster index to a list of up to 3
+        document titles that are closest to the cluster centroid.
     """
     try:
         import numpy as np
@@ -136,7 +139,7 @@ def build_vocabulary(
 
     entries = db.list_all()
     if not entries:
-        return []
+        return [], {}
 
     # Build text representations
     texts: list[str] = []
@@ -166,7 +169,8 @@ def build_vocabulary(
     if n_docs < 2:
         # Can't cluster a single document — just name it directly
         topic = _name_cluster(ai_backend, doc_metas[:1])
-        return [topic]
+        representative_docs = {0: [doc_metas[0]["title"]]}
+        return [topic], representative_docs
 
     # Determine number of clusters
     if n_topics is not None:
@@ -179,9 +183,10 @@ def build_vocabulary(
     labels = km.fit_predict(embeddings)
     centroids = km.cluster_centers_
 
-    # For each cluster, find 5 docs closest to centroid
+    # For each cluster, find 5 docs closest to centroid (3 for representative display)
     vocabulary: list[str] = []
     cluster_docs_map: list[list[dict]] = []
+    representative_docs: dict[int, list[str]] = {}
     used_names: list[str] = []
     for cluster_idx in range(k):
         mask = labels == cluster_idx
@@ -191,8 +196,9 @@ def build_vocabulary(
 
         # Distances to centroid
         dists = np.linalg.norm(cluster_embeddings - centroid, axis=1)
+        sorted_order = np.argsort(dists)
         top_n = min(5, len(cluster_indices))
-        closest = cluster_indices[np.argsort(dists)[:top_n]]
+        closest = cluster_indices[sorted_order[:top_n]]
 
         cluster_docs = [doc_metas[i] for i in closest]
         # Pass already-assigned names so the AI picks a different one upfront
@@ -201,10 +207,14 @@ def build_vocabulary(
         cluster_docs_map.append(cluster_docs)
         used_names.append(topic_name)
 
+        # Store the 3 closest titles as representative docs for this cluster
+        top_3 = cluster_indices[sorted_order[:min(3, len(cluster_indices))]]
+        representative_docs[cluster_idx] = [doc_metas[i]["title"] for i in top_3]
+
     # Resolve duplicate names (e.g. two clusters both named "Álgebra Lineal")
     _deduplicate_vocabulary(ai_backend, vocabulary, cluster_docs_map)
 
-    return vocabulary
+    return vocabulary, representative_docs
 
 
 def _optimal_k(embeddings, min_k: int = 2, max_k: int = 20) -> int:
