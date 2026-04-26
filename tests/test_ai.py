@@ -73,7 +73,7 @@ class TestPromptBuilders:
         metadata = DocumentMetadata(
             title="El tunel",
             author="Ernesto Sabato",
-            doc_type="novel",
+            doc_type="book",
             year=1948,
             publisher="Sur",
             language="es",

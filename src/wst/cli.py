@@ -734,6 +734,7 @@ def _copy_to_inbox(source: Path, inbox: Path) -> list[Path]:
 @click.option("--author", "-a", default=None, help="Filter by author")
 @click.option("--type", "-t", "doc_type", default=None, help="Filter by document type")
 @click.option("--subject", "-s", default=None, help="Filter by subject/knowledge area")
+@click.option("--topic", "-p", default=None, help="Filter by topic (partial, case-insensitive)")
 @click.pass_context
 def search(
     ctx: click.Context,
@@ -741,14 +742,15 @@ def search(
     author: str | None,
     doc_type: str | None,
     subject: str | None,
+    topic: str | None,
 ) -> None:
-    """Search documents by title, author, tags, or subject."""
+    """Search documents by title, author, tags, subject, or topic."""
     config: WstConfig = ctx.obj["config"]
     fmt: str = ctx.obj.get("format", "human")
     db = Database(config.db_path)
 
     try:
-        results = db.search(query, doc_type=doc_type, author=author, subject=subject)
+        results = db.search(query, doc_type=doc_type, author=author, subject=subject, topic=topic)
         if not results:
             if fmt == "human":
                 click.echo("No results found.")
@@ -843,6 +845,7 @@ def show(ctx: click.Context, identifier: str) -> None:
         click.echo(f"Pages:         {m.page_count or 'N/A'}")
         click.echo(f"Subject:       {m.subject or 'N/A'}")
         click.echo(f"Tags:          {', '.join(m.tags) if m.tags else 'N/A'}")
+        click.echo(f"Topics:        {', '.join(m.topics) if m.topics else 'N/A'}")
         click.echo(f"Summary:       {m.summary or 'N/A'}")
         click.echo(f"TOC:           {m.table_of_contents or 'N/A'}")
         click.echo(f"File:          {entry.file_path}")
@@ -1250,6 +1253,8 @@ def _apply_metadata_updates(
                 m.summary = v or None
             case "tags":
                 m.tags = [t.strip() for t in v.split(",") if t.strip()] if v else []
+            case "topics":
+                m.topics = [t.strip() for t in v.split(",") if t.strip()] if v else []
             case _:
                 raise click.UsageError(f"Unknown metadata field for --set: {k}")
 
@@ -1356,6 +1361,12 @@ def _prompt_doc_type(current: DocType) -> DocType:
     multiple=True,
     help="Only fix documents missing this field (e.g. --field isbn --field toc)",
 )
+@click.option(
+    "--topics",
+    "fix_topics",
+    is_flag=True,
+    help="Assign topics (from existing vocabulary) to documents that have none",
+)
 @click.option("--yes", "-y", is_flag=True, help="Auto-accept all changes without prompting")
 @click.option("--dry-run", is_flag=True, help="Show what would be enriched without making changes")
 @click.pass_context
@@ -1363,6 +1374,7 @@ def fix(
     ctx: click.Context,
     doc_type: str | None,
     field: tuple[str, ...],
+    fix_topics: bool,
     yes: bool,
     dry_run: bool,
 ) -> None:
@@ -1375,11 +1387,12 @@ def fix(
     \b
     Examples:
         wst fix                         # fix all documents with missing fields
-        wst fix --type textbook         # only textbooks
+        wst fix --type book             # only books
         wst fix --field isbn            # only those missing ISBN
         wst fix --field isbn --field toc
+        wst fix --topics                # assign topics to docs without topics
         wst fix --dry-run               # preview what needs fixing
-        wst fix --type novel -y         # fix all novels, auto-accept
+        wst fix -y                      # fix all docs, auto-accept
         wst fix --dry-run --format json # preview as structured output
         wst fix -y --format yaml        # run non-interactively
     """
@@ -1391,6 +1404,11 @@ def fix(
     db = Database(config.db_path)
 
     try:
+        # --topics shortcut: assign topics to docs that have none
+        if fix_topics:
+            _fix_topics_cmd(db, config, fmt=fmt, yes=yes, dry_run=dry_run, doc_type=doc_type)
+            return
+
         entries = db.list_all(doc_type=doc_type)
 
         # Filter to entries with missing fields
@@ -1559,3 +1577,341 @@ def _print_table(entries: list) -> None:
         author = m.author[:23] + ".." if len(m.author) > 25 else m.author
         year = str(m.year) if m.year else "N/A"
         click.echo(f"{e.id:>4}  {title:<40}  {author:<25}  {m.doc_type.value:<12}  {year:>4}")
+
+
+# ---------------------------------------------------------------------------
+# Topics group
+# ---------------------------------------------------------------------------
+
+
+@cli.group()
+@command_format_option()
+@click.pass_context
+def topics(ctx: click.Context) -> None:
+    """Manage high-level topic vocabulary and document assignments.
+
+    \b
+    Commands:
+      build   Generate vocabulary from corpus and assign to all documents.
+      list    Show the current topic vocabulary.
+      assign  (Re)assign topics to one or all documents.
+    """
+
+
+@topics.command("build")
+@command_format_option()
+@click.option(
+    "--n-topics",
+    "n_topics",
+    type=int,
+    default=None,
+    help="Number of topics to generate (default: auto-detect via silhouette score)",
+)
+@click.option("--yes", "-y", is_flag=True, help="Overwrite existing vocabulary without prompting")
+@click.pass_context
+def topics_build(ctx: click.Context, n_topics: int | None, yes: bool) -> None:
+    """Generate topic vocabulary from the corpus and assign to all documents.
+
+    \b
+    Steps:
+      1. Embed all documents with a multilingual sentence-transformer.
+      2. Cluster with KMeans (auto-detect optimal k or use --n-topics).
+      3. Name each cluster via AI.
+      4. Assign 1-3 topics to every document.
+      5. Save vocabulary to the database.
+
+    \b
+    Examples:
+        wst topics build
+        wst topics build --n-topics 12
+        wst topics build -y --format json
+    """
+    config: WstConfig = ctx.obj["config"]
+    fmt: str = ctx.obj.get("format", "human")
+    db = Database(config.db_path)
+
+    try:
+        from wst.topics import assign_topics, build_vocabulary, save_vocabulary
+
+        # Check for existing vocabulary
+        existing = db.load_topics_vocabulary()
+        if existing and not yes:
+            if fmt != "human":
+                from wst.output import WstError
+
+                raise WstError(
+                    "usage_error",
+                    "Vocabulary already exists. Use -y/--yes to overwrite.",
+                    details={"hint": "Try: wst topics build -y --format json"},
+                    exit_code=2,
+                )
+            if not click.confirm(
+                f"Vocabulary already exists ({len(existing)} topics). Overwrite?", default=False
+            ):
+                click.echo("Aborted.")
+                return
+
+        ai = get_ai_backend(config.ai_backend, config.ai_model)
+
+        if fmt == "human":
+            click.echo("Step 1/3  Embedding documents and clustering...")
+        vocabulary = build_vocabulary(db, ai, n_topics=n_topics)
+
+        if not vocabulary:
+            if fmt == "human":
+                click.echo("Library is empty — nothing to build.")
+                return
+            from wst.output import render_ok
+
+            render_ok({"vocabulary": [], "assignments": {}}, fmt=fmt)
+            return
+
+        if fmt == "human":
+            click.echo(f"          Generated {len(vocabulary)} topics: {', '.join(vocabulary)}")
+            click.echo("Step 2/3  Assigning topics to documents...")
+
+        assignments = assign_topics(db, ai, vocabulary)
+
+        if fmt == "human":
+            click.echo("Step 3/3  Saving to database...")
+
+        save_vocabulary(db, vocabulary)
+
+        # Persist assignments
+        entries = db.list_all()
+        entry_map = {e.id: e for e in entries}
+        for doc_id, assigned in assignments.items():
+            entry = entry_map.get(doc_id)
+            if entry is None:
+                continue
+            entry.metadata.topics = assigned
+            db.update(entry)
+
+        if fmt == "human":
+            click.echo(f"\nDone. {len(assignments)} document(s) assigned topics.")
+            click.echo(f"Vocabulary ({len(vocabulary)}): {', '.join(vocabulary)}")
+            return
+
+        from wst.output import render_ok
+
+        render_ok(
+            {
+                "vocabulary": vocabulary,
+                "assigned_count": len(assignments),
+                "assignments": {str(k): v for k, v in assignments.items()},
+            },
+            fmt=fmt,
+        )
+    finally:
+        db.close()
+
+
+@topics.command("list")
+@command_format_option()
+@click.pass_context
+def topics_list(ctx: click.Context) -> None:
+    """Show the current topic vocabulary.
+
+    \b
+    Examples:
+        wst topics list
+        wst topics list --format json
+    """
+    config: WstConfig = ctx.obj["config"]
+    fmt: str = ctx.obj.get("format", "human")
+    db = Database(config.db_path)
+
+    try:
+        vocabulary = db.load_topics_vocabulary()
+        if not vocabulary:
+            if fmt == "human":
+                click.echo("No topic vocabulary found. Run `wst topics build` first.")
+                return
+            from wst.output import render_ok
+
+            render_ok({"vocabulary": []}, fmt=fmt)
+            return
+
+        if fmt == "human":
+            click.echo(f"Topic vocabulary ({len(vocabulary)} topics):")
+            for i, t in enumerate(vocabulary, 1):
+                click.echo(f"  {i:>3}. {t}")
+            return
+
+        from wst.output import render_ok
+
+        render_ok({"vocabulary": vocabulary}, fmt=fmt)
+    finally:
+        db.close()
+
+
+@topics.command("assign")
+@command_format_option()
+@click.option("--id", "doc_id", type=int, default=None, help="Assign topics to a single document")
+@click.option("--yes", "-y", is_flag=True, help="Apply without prompting")
+@click.pass_context
+def topics_assign(ctx: click.Context, doc_id: int | None, yes: bool) -> None:
+    """(Re)assign topics to a specific document or all documents.
+
+    \b
+    Requires a vocabulary already built with `wst topics build`.
+
+    \b
+    Examples:
+        wst topics assign --id 3
+        wst topics assign           # reassign all documents
+        wst topics assign -y --format json
+    """
+    config: WstConfig = ctx.obj["config"]
+    fmt: str = ctx.obj.get("format", "human")
+    db = Database(config.db_path)
+
+    try:
+        from wst.topics import assign_topics
+
+        vocabulary = db.load_topics_vocabulary()
+        if not vocabulary:
+            if fmt == "human":
+                click.echo("No vocabulary found. Run `wst topics build` first.")
+                raise SystemExit(1)
+            from wst.output import WstError
+
+            raise WstError(
+                "not_found",
+                "No topic vocabulary found. Run `wst topics build` first.",
+                exit_code=1,
+            )
+
+        ai = get_ai_backend(config.ai_backend, config.ai_model)
+
+        if doc_id is not None:
+            entry = db.get(doc_id)
+            if entry is None:
+                if fmt == "human":
+                    click.echo(f"Document {doc_id} not found.")
+                    raise SystemExit(1)
+                from wst.output import WstError
+
+                raise WstError("not_found", f"Document {doc_id} not found.", exit_code=1)
+            entries_to_assign = [entry]
+        else:
+            entries_to_assign = db.list_all()
+
+        if fmt == "human" and not yes and not doc_id:
+            if not click.confirm(
+                f"Reassign topics for all {len(entries_to_assign)} document(s)?", default=True
+            ):
+                click.echo("Aborted.")
+                return
+
+        assignments = assign_topics(db, ai, vocabulary)
+
+        entry_map = {e.id: e for e in entries_to_assign}
+        updated = 0
+        for eid, assigned_topics in assignments.items():
+            entry = entry_map.get(eid)
+            if entry is None:
+                continue
+            entry.metadata.topics = assigned_topics
+            db.update(entry)
+            updated += 1
+
+        if fmt == "human":
+            click.echo(f"Assigned topics to {updated} document(s).")
+            return
+
+        from wst.output import render_ok
+
+        render_ok(
+            {
+                "updated": updated,
+                "assignments": {str(k): v for k, v in assignments.items()},
+            },
+            fmt=fmt,
+        )
+    finally:
+        db.close()
+
+
+def _fix_topics_cmd(
+    db: Database,
+    config: WstConfig,
+    *,
+    fmt: str,
+    yes: bool,
+    dry_run: bool,
+    doc_type: str | None,
+) -> None:
+    """Assign topics (from existing vocabulary) to documents that have none."""
+    from wst.topics import assign_topics
+
+    vocabulary = db.load_topics_vocabulary()
+    if not vocabulary:
+        if fmt == "human":
+            click.echo("No vocabulary found. Run `wst topics build` first.")
+            raise SystemExit(1)
+        from wst.output import WstError
+
+        raise WstError(
+            "not_found",
+            "No topic vocabulary found. Run `wst topics build` first.",
+            exit_code=1,
+        )
+
+    entries = db.list_all(doc_type=doc_type)
+    without_topics = [e for e in entries if not e.metadata.topics]
+
+    if not without_topics:
+        if fmt == "human":
+            click.echo("All documents already have topics assigned.")
+            return
+        from wst.output import render_ok
+
+        render_ok({"scanned": len(entries), "updated": 0}, fmt=fmt)
+        return
+
+    if fmt == "human":
+        click.echo(f"Found {len(without_topics)} document(s) without topics.")
+
+    if dry_run:
+        preview = [{"id": e.id, "title": e.metadata.title} for e in without_topics]
+        if fmt == "human":
+            for item in preview:
+                click.echo(f"  [{item['id']}] {item['title']}")
+            return
+        from wst.output import render_ok
+
+        render_ok({"scanned": len(entries), "to_assign": len(without_topics), "preview": preview},
+                  fmt=fmt)
+        return
+
+    if fmt != "human" and not yes:
+        from wst.output import WstError
+
+        raise WstError(
+            "usage_error",
+            "Non-interactive --topics fix requires -y/--yes (or use --dry-run).",
+            details={"hint": "Try: wst fix --topics -y --format json"},
+            exit_code=2,
+        )
+
+    ai = get_ai_backend(config.ai_backend, config.ai_model)
+    assignments = assign_topics(db, ai, vocabulary)
+
+    entry_map = {e.id: e for e in without_topics}
+    updated = 0
+    for doc_id, assigned_topics in assignments.items():
+        entry = entry_map.get(doc_id)
+        if entry is None:
+            continue
+        entry.metadata.topics = assigned_topics
+        db.update(entry)
+        updated += 1
+
+    if fmt == "human":
+        click.echo(f"Assigned topics to {updated} document(s).")
+        return
+
+    from wst.output import render_ok
+
+    render_ok({"scanned": len(entries), "updated": updated}, fmt=fmt)

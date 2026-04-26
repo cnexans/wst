@@ -11,11 +11,7 @@ class TestDocType:
 
     def test_folder_values(self):
         assert DOCTYPE_FOLDER[DocType.BOOK] == "books"
-        assert DOCTYPE_FOLDER[DocType.NOVEL] == "books"
-        assert DOCTYPE_FOLDER[DocType.TEXTBOOK] == "books"
         assert DOCTYPE_FOLDER[DocType.PAPER] == "papers"
-        assert DOCTYPE_FOLDER[DocType.CLASS_NOTES] == "notes"
-        assert DOCTYPE_FOLDER[DocType.EXERCISES] == "exercises"
         assert DOCTYPE_FOLDER[DocType.GUIDE_THEORY] == "guides"
         assert DOCTYPE_FOLDER[DocType.GUIDE_PRACTICE] == "guides"
 
@@ -27,17 +23,19 @@ class TestDocumentMetadata:
         assert meta.author == "Author"
         assert meta.year is None
         assert meta.tags == []
+        assert meta.topics == []
 
     def test_full_metadata(self):
         meta = DocumentMetadata(
             title="Test Book",
             author="John Doe",
-            doc_type=DocType.TEXTBOOK,
+            doc_type=DocType.BOOK,
             year=2024,
             publisher="Publisher",
             isbn="978-0-123456-78-9",
             language="en",
             tags=["math", "algebra"],
+            topics=["Matemáticas"],
             page_count=300,
             summary="A test book",
             table_of_contents="Ch1, Ch2",
@@ -45,6 +43,7 @@ class TestDocumentMetadata:
         )
         assert meta.year == 2024
         assert len(meta.tags) == 2
+        assert meta.topics == ["Matemáticas"]
         assert meta.language == "en"
 
     def test_missing_required_fields(self):

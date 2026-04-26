@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS documents (
     isbn              TEXT,
     language          TEXT,
     tags              TEXT,
+    topics            TEXT,
     page_count        INTEGER,
     summary           TEXT,
     toc               TEXT,
@@ -33,21 +34,49 @@ CREATE INDEX IF NOT EXISTS idx_year ON documents(year);
 
 FTS_SCHEMA = """
 CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
-    title, author, tags, subject, summary,
+    title, author, tags, topics, subject, summary,
     content='documents',
     content_rowid='id'
 );
 
 CREATE TRIGGER IF NOT EXISTS documents_ai AFTER INSERT ON documents BEGIN
-    INSERT INTO documents_fts(rowid, title, author, tags, subject, summary)
-    VALUES (new.id, new.title, new.author, new.tags, new.subject, new.summary);
+    INSERT INTO documents_fts(rowid, title, author, tags, topics, subject, summary)
+    VALUES (new.id, new.title, new.author, new.tags, new.topics, new.subject, new.summary);
 END;
 
 CREATE TRIGGER IF NOT EXISTS documents_ad AFTER DELETE ON documents BEGIN
-    INSERT INTO documents_fts(documents_fts, rowid, title, author, tags, subject, summary)
-    VALUES ('delete', old.id, old.title, old.author, old.tags, old.subject, old.summary);
+    INSERT INTO documents_fts(documents_fts, rowid, title, author, tags, topics, subject, summary)
+    VALUES (
+        'delete', old.id, old.title, old.author, old.tags, old.topics, old.subject, old.summary
+    );
 END;
 """
+
+TOPICS_VOCABULARY_SCHEMA = """
+CREATE TABLE IF NOT EXISTS topics_vocabulary (
+    id      INTEGER PRIMARY KEY CHECK (id = 1),
+    topics  TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+"""
+
+
+def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return any(r["name"] == column for r in rows)
+
+
+def _has_fts_column(conn: sqlite3.Connection, column: str) -> bool:
+    """Check if a column exists in the FTS table by inspecting its schema."""
+    try:
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='documents_fts'"
+        ).fetchone()
+        if row is None:
+            return False
+        return column in (row["sql"] or "")
+    except Exception:
+        return False
 
 
 class Database:
@@ -60,7 +89,46 @@ class Database:
 
     def _init_schema(self) -> None:
         self.conn.executescript(SCHEMA)
+        # Add topics column to documents if it doesn't exist (migration for old DBs)
+        if not _has_column(self.conn, "documents", "topics"):
+            self.conn.execute("ALTER TABLE documents ADD COLUMN topics TEXT")
+            self.conn.commit()
+
+        # Ensure FTS table has topics column; rebuild if missing
+        if not _has_fts_column(self.conn, "topics"):
+            self._rebuild_fts()
+        else:
+            self.conn.executescript(FTS_SCHEMA)
+
+        self.conn.executescript(TOPICS_VOCABULARY_SCHEMA)
+
+    def _rebuild_fts(self) -> None:
+        """Drop and recreate FTS table with the current schema, then repopulate."""
+        self.conn.executescript("""
+            DROP TRIGGER IF EXISTS documents_ai;
+            DROP TRIGGER IF EXISTS documents_ad;
+            DROP TABLE IF EXISTS documents_fts;
+        """)
         self.conn.executescript(FTS_SCHEMA)
+        # Repopulate FTS from documents table
+        rows = self.conn.execute(
+            "SELECT id, title, author, tags, topics, subject, summary FROM documents"
+        ).fetchall()
+        for row in rows:
+            self.conn.execute(
+                "INSERT INTO documents_fts(rowid, title, author, tags, topics, subject, summary)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    row["id"],
+                    row["title"],
+                    row["author"],
+                    row["tags"],
+                    row["topics"],
+                    row["subject"],
+                    row["summary"],
+                ),
+            )
+        self.conn.commit()
 
     def close(self) -> None:
         self.conn.close()
@@ -98,9 +166,9 @@ class Database:
         cur = self.conn.execute(
             """INSERT INTO documents
                (title, author, doc_type, year, publisher, isbn, language,
-                tags, page_count, summary, toc, subject,
+                tags, topics, page_count, summary, toc, subject,
                 filename, original_filename, file_path, file_hash, ingested_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 m.title,
                 m.author,
@@ -110,6 +178,7 @@ class Database:
                 m.isbn,
                 m.language,
                 json.dumps(m.tags),
+                json.dumps(m.topics),
                 m.page_count,
                 m.summary,
                 m.table_of_contents,
@@ -130,6 +199,7 @@ class Database:
         doc_type: str | None = None,
         author: str | None = None,
         subject: str | None = None,
+        topic: str | None = None,
     ) -> list[LibraryEntry]:
         if query:
             sql = """SELECT d.* FROM documents d
@@ -149,6 +219,9 @@ class Database:
         if subject:
             sql += " AND d.subject LIKE ?"
             params.append(f"%{subject}%")
+        if topic:
+            sql += " AND LOWER(d.topics) LIKE LOWER(?)"
+            params.append(f"%{topic}%")
 
         sql += " ORDER BY d.title"
         rows = self.conn.execute(sql, params).fetchall()
@@ -170,20 +243,33 @@ class Database:
 
     def update(self, entry: LibraryEntry) -> None:
         m = entry.metadata
-        # Delete old FTS entry before update
-        fts_del = (
-            "INSERT INTO documents_fts"
-            "(documents_fts, rowid, title, author, tags, subject, summary) "
-            "VALUES ('delete', ?, ?, ?, ?, ?, ?)"
-        )
-        self.conn.execute(
-            fts_del,
-            (entry.id, m.title, m.author, json.dumps(m.tags), m.subject, m.summary),
-        )
+        # Fetch the CURRENT row values so we can remove the exact FTS entry that was inserted
+        old_row = self.conn.execute(
+            "SELECT title, author, tags, topics, subject, summary FROM documents WHERE id = ?",
+            (entry.id,),
+        ).fetchone()
+        if old_row is not None:
+            fts_del = (
+                "INSERT INTO documents_fts"
+                "(documents_fts, rowid, title, author, tags, topics, subject, summary) "
+                "VALUES ('delete', ?, ?, ?, ?, ?, ?, ?)"
+            )
+            self.conn.execute(
+                fts_del,
+                (
+                    entry.id,
+                    old_row["title"],
+                    old_row["author"],
+                    old_row["tags"],
+                    old_row["topics"],
+                    old_row["subject"],
+                    old_row["summary"],
+                ),
+            )
         self.conn.execute(
             """UPDATE documents SET
                title=?, author=?, doc_type=?, year=?, publisher=?, isbn=?,
-               language=?, tags=?, page_count=?, summary=?, toc=?, subject=?,
+               language=?, tags=?, topics=?, page_count=?, summary=?, toc=?, subject=?,
                filename=?, file_path=?
                WHERE id=?""",
             (
@@ -195,6 +281,7 @@ class Database:
                 m.isbn,
                 m.language,
                 json.dumps(m.tags),
+                json.dumps(m.topics),
                 m.page_count,
                 m.summary,
                 m.table_of_contents,
@@ -204,11 +291,19 @@ class Database:
                 entry.id,
             ),
         )
-        # Re-insert FTS entry
+        # Re-insert FTS entry with new values
         self.conn.execute(
-            "INSERT INTO documents_fts(rowid, title, author, tags, subject, summary) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (entry.id, m.title, m.author, json.dumps(m.tags), m.subject, m.summary),
+            "INSERT INTO documents_fts(rowid, title, author, tags, topics, subject, summary) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                entry.id,
+                m.title,
+                m.author,
+                json.dumps(m.tags),
+                json.dumps(m.topics),
+                m.subject,
+                m.summary,
+            ),
         )
         self.conn.commit()
 
@@ -222,8 +317,27 @@ class Database:
         ).fetchone()
         return self._row_to_entry(row) if row else None
 
+    def save_topics_vocabulary(self, vocabulary: list[str]) -> None:
+        self.conn.execute(
+            "INSERT OR REPLACE INTO topics_vocabulary(id, topics, updated_at)"
+            " VALUES (1, ?, datetime('now'))",
+            (json.dumps(vocabulary),),
+        )
+        self.conn.commit()
+
+    def load_topics_vocabulary(self) -> list[str] | None:
+        row = self.conn.execute("SELECT topics FROM topics_vocabulary WHERE id = 1").fetchone()
+        if row is None:
+            return None
+        return json.loads(row["topics"])
+
     def _row_to_entry(self, row: sqlite3.Row) -> LibraryEntry:
         tags = json.loads(row["tags"]) if row["tags"] else []
+        # topics column may not exist in very old DB rows (defensive)
+        try:
+            topics = json.loads(row["topics"]) if row["topics"] else []
+        except (IndexError, KeyError):
+            topics = []
         meta = DocumentMetadata(
             title=row["title"],
             author=row["author"],
@@ -233,6 +347,7 @@ class Database:
             isbn=row["isbn"],
             language=row["language"],
             tags=tags,
+            topics=topics,
             page_count=row["page_count"],
             summary=row["summary"],
             table_of_contents=row["toc"],

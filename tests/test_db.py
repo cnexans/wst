@@ -73,7 +73,7 @@ class TestDatabase:
 
     def test_search_by_doc_type(self, db):
         db.insert(_make_entry(doc_type=DocType.PAPER, file_hash="h1"))
-        db.insert(_make_entry(doc_type=DocType.NOVEL, file_hash="h2"))
+        db.insert(_make_entry(doc_type=DocType.GUIDE_PRACTICE, file_hash="h2"))
         results = db.search("", doc_type="paper")
         assert len(results) == 1
 
@@ -92,7 +92,7 @@ class TestDatabase:
 
     def test_list_all_filter_type(self, db):
         db.insert(_make_entry(doc_type=DocType.PAPER, file_hash="h1"))
-        db.insert(_make_entry(doc_type=DocType.NOVEL, file_hash="h2"))
+        db.insert(_make_entry(doc_type=DocType.GUIDE_PRACTICE, file_hash="h2"))
         results = db.list_all(doc_type="paper")
         assert len(results) == 1
 

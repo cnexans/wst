@@ -56,8 +56,7 @@ No explanation, no markdown, just the raw JSON.
 {text_sample}
 
 ## Field guidelines
-- doc_type: one of book, novel, textbook, paper, class-notes, exercises,
-  guide-theory, guide-practice
+- doc_type: one of book, paper, guide-theory, guide-practice
 - language: ISO 639-1 code (e.g. "en", "es")
 - tags: relevant topics and keywords
 - summary: 2-3 sentence description

@@ -13,7 +13,7 @@ from wst.output import _ok, to_payload
 def _sample_entry() -> LibraryEntry:
     return LibraryEntry(
         id=1,
-        metadata=DocumentMetadata(title="Sample", author="A", doc_type=DocType.TEXTBOOK),
+        metadata=DocumentMetadata(title="Sample", author="A", doc_type=DocType.BOOK),
         filename="t.pdf",
         original_filename="t.pdf",
         file_path="books/t.pdf",
@@ -25,7 +25,7 @@ def _sample_entry() -> LibraryEntry:
 class TestToPayload:
     def test_str_enum_becomes_plain_string(self):
         payload = to_payload([_sample_entry()])
-        assert payload[0]["metadata"]["doc_type"] == "textbook"
+        assert payload[0]["metadata"]["doc_type"] == "book"
         assert type(payload[0]["metadata"]["doc_type"]) is str
         json.dumps(payload)
 
@@ -39,7 +39,7 @@ class TestToPayload:
         dumped = yaml.safe_dump(payload, allow_unicode=True)
         roundtrip = yaml.safe_load(dumped)
         assert roundtrip["ok"] is True
-        assert roundtrip["data"][0]["metadata"]["doc_type"] == "textbook"
+        assert roundtrip["data"][0]["metadata"]["doc_type"] == "book"
 
 
 class TestSearchMachineOutputCli:
@@ -72,7 +72,7 @@ class TestSearchMachineOutputCli:
         assert r.exit_code == 0, r.output
         parsed = json.loads(r.output)
         assert parsed["ok"] is True
-        assert parsed["data"][0]["metadata"]["doc_type"] == "textbook"
+        assert parsed["data"][0]["metadata"]["doc_type"] == "book"
 
     def test_search_yaml_emits_plain_doc_type_when_pyyaml_installed(self, monkeypatch, tmp_path):
         pytest.importorskip("yaml")
@@ -87,4 +87,4 @@ class TestSearchMachineOutputCli:
 
         parsed = yaml.safe_load(r.output)
         assert parsed["ok"] is True
-        assert parsed["data"][0]["metadata"]["doc_type"] == "textbook"
+        assert parsed["data"][0]["metadata"]["doc_type"] == "book"
