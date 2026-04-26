@@ -1945,8 +1945,9 @@ def _fix_topics_cmd(
             return
         from wst.output import render_ok
 
-        render_ok({"scanned": len(entries), "to_assign": len(without_topics), "preview": preview},
-                  fmt=fmt)
+        render_ok(
+            {"scanned": len(entries), "to_assign": len(without_topics), "preview": preview}, fmt=fmt
+        )
         return
 
     if fmt != "human" and not yes:

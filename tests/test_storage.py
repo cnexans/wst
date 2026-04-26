@@ -41,9 +41,7 @@ class TestBuildDestPath:
         assert build_dest_path(meta) == "guides/Prof Smith - Exercises Vol 1 (2024).pdf"
 
     def test_epub_extension(self):
-        meta = DocumentMetadata(
-            title="A Novel", author="Author", doc_type=DocType.BOOK, year=2020
-        )
+        meta = DocumentMetadata(title="A Novel", author="Author", doc_type=DocType.BOOK, year=2020)
         assert build_dest_path(meta, extension=".epub") == "books/Author - A Novel (2020).epub"
 
     def test_djvu_extension(self):

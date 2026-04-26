@@ -210,7 +210,7 @@ def build_vocabulary(
         used_names.append(topic_name)
 
         # Store the 3 closest titles as representative docs for this cluster
-        top_3 = cluster_indices[sorted_order[:min(3, len(cluster_indices))]]
+        top_3 = cluster_indices[sorted_order[: min(3, len(cluster_indices))]]
         representative_docs[cluster_idx] = [doc_metas[i]["title"] for i in top_3]
 
     # Resolve duplicate names (e.g. two clusters both named "Álgebra Lineal")
