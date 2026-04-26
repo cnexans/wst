@@ -121,11 +121,11 @@ def build_vocabulary(
         import sys
 
         base_msg = (
-            f"Topic modeling requires additional dependencies: {e}. "
-            "Install them with:\n\n"
-            "    pip install 'wst-library[topics]'\n\n"
-            "or:\n\n"
-            "    pip install sentence-transformers scikit-learn"
+            f"Topic modeling requires additional dependencies: {e}.\n\n"
+            "If you installed wst with pipx (recommended):\n\n"
+            "    pipx inject wst-library sentence-transformers scikit-learn\n\n"
+            "Otherwise:\n\n"
+            "    pip install 'wst-library[topics]'"
         )
         macos_note = ""
         if sys.platform == "darwin" and platform.machine() == "arm64":
