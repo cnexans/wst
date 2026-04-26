@@ -39,6 +39,32 @@ Documents:
 {docs_str}"""
 
 
+def _build_disambiguate_prompt(name: str, docs_a: list[dict], docs_b: list[dict]) -> str:
+    """Build a prompt asking the AI to give two different names to two duplicate-named clusters."""
+    titles_a = [d["title"] for d in docs_a]
+    titles_b = [d["title"] for d in docs_b]
+    tags_a = list({tag for d in docs_a for tag in (d.get("tags") or [])})
+    tags_b = list({tag for d in docs_b for tag in (d.get("tags") or [])})
+
+    def _fmt(titles: list[str], tags: list[str]) -> str:
+        lines = [f"  - {t}" for t in titles]
+        if tags:
+            lines.append(f"  Tags representativos: {', '.join(tags)}")
+        return "\n".join(lines)
+
+    return f"""Tenés dos grupos de documentos que nombraste igual ("{name}").
+Necesitás darles nombres DISTINTOS y específicos para diferenciarlos.
+
+Grupo A (documentos):
+{_fmt(titles_a, tags_a)}
+
+Grupo B (documentos):
+{_fmt(titles_b, tags_b)}
+
+Respondé con exactamente dos nombres, uno por línea, en español, 1-3 palabras cada uno.
+No pongas explicaciones, numeración, ni puntuación — solo los dos nombres."""
+
+
 def _build_assign_topics_prompt(vocabulary: list[str], doc: dict) -> str:
     """Build a prompt asking Claude to assign topics to a document."""
     vocab_str = ", ".join(f'"{t}"' for t in vocabulary)
@@ -80,11 +106,28 @@ def build_vocabulary(
         import numpy as np
         from sentence_transformers import SentenceTransformer  # type: ignore[import-not-found]
         from sklearn.cluster import KMeans  # type: ignore[import-not-found]
-    except ImportError as e:
-        raise RuntimeError(
+    except (ImportError, OSError) as e:
+        import platform
+        import sys
+
+        base_msg = (
             f"Topic modeling requires additional dependencies: {e}. "
-            "Install them with: pip install sentence-transformers scikit-learn"
-        ) from e
+            "Install them with:\n\n"
+            "    pip install 'wst-library[topics]'\n\n"
+            "or:\n\n"
+            "    pip install sentence-transformers scikit-learn"
+        )
+        macos_note = ""
+        if sys.platform == "darwin" and platform.machine() == "arm64":
+            macos_note = (
+                "\n\nOn macOS (Apple Silicon) with Python 3.14+ (Homebrew), you may hit a "
+                "libexpat version mismatch. Workaround:\n\n"
+                "    DYLD_LIBRARY_PATH=/opt/homebrew/Cellar/expat/2.7.5/lib "
+                "pip install 'wst-library[topics]'\n\n"
+                "Or use the Makefile target:\n\n"
+                "    make install-topics"
+            )
+        raise RuntimeError(base_msg + macos_note) from e
 
     entries = db.list_all()
     if not entries:
@@ -133,6 +176,7 @@ def build_vocabulary(
 
     # For each cluster, find 5 docs closest to centroid
     vocabulary: list[str] = []
+    cluster_docs_map: list[list[dict]] = []
     for cluster_idx in range(k):
         mask = labels == cluster_idx
         cluster_indices = np.where(mask)[0]
@@ -147,6 +191,10 @@ def build_vocabulary(
         cluster_docs = [doc_metas[i] for i in closest]
         topic_name = _name_cluster(ai_backend, cluster_docs)
         vocabulary.append(topic_name)
+        cluster_docs_map.append(cluster_docs)
+
+    # Resolve duplicate names (e.g. two clusters both named "Álgebra Lineal")
+    _deduplicate_vocabulary(ai_backend, vocabulary, cluster_docs_map)
 
     return vocabulary
 
@@ -182,6 +230,73 @@ def _name_cluster(ai_backend: AIBackend, cluster_docs: list[dict]) -> str:
     result = _call_ai_raw(ai_backend, prompt)
     # Clean up any stray whitespace / quotes
     return result.strip().strip('"').strip("'").strip()
+
+
+def _deduplicate_vocabulary(
+    ai_backend: AIBackend,
+    vocabulary: list[str],
+    cluster_docs_map: list[list[dict]],
+    max_iterations: int = 5,
+) -> list[str]:
+    """Resolve duplicate topic names in the vocabulary.
+
+    For each group of clusters that share the same name, asks the AI to
+    produce distinct replacement names using both clusters' documents as
+    context.  Iterates until no duplicates remain or max_iterations is hit.
+
+    Args:
+        ai_backend: The AI backend to use for renaming.
+        vocabulary: Mutable list of topic names (one per cluster, same order
+            as cluster_docs_map).
+        cluster_docs_map: List where index i holds the representative docs for
+            cluster i — parallel to vocabulary.
+        max_iterations: Safety cap to avoid infinite loops (default 5).
+
+    Returns:
+        The deduplicated vocabulary (same list object, mutated in-place and
+        also returned for convenience).
+    """
+    for _iteration in range(max_iterations):
+        # Build a map: name (lowercased) -> list of indices with that name
+        name_to_indices: dict[str, list[int]] = {}
+        for idx, name in enumerate(vocabulary):
+            key = name.lower()
+            name_to_indices.setdefault(key, []).append(idx)
+
+        # Find groups with more than one cluster sharing a name
+        duplicates = {k: v for k, v in name_to_indices.items() if len(v) > 1}
+        if not duplicates:
+            break  # All names are unique — we're done
+
+        for _name_key, indices in duplicates.items():
+            # Disambiguate pairs of duplicates sequentially
+            # (covers the case where 3+ clusters share the same name)
+            while len(indices) > 1:
+                idx_a, idx_b = indices[0], indices[1]
+                current_name = vocabulary[idx_a]
+                docs_a = cluster_docs_map[idx_a]
+                docs_b = cluster_docs_map[idx_b]
+
+                prompt = _build_disambiguate_prompt(current_name, docs_a, docs_b)
+                raw = _call_ai_raw(ai_backend, prompt)
+
+                # Parse exactly two names (one per line)
+                lines = [
+                    ln.strip().strip('"').strip("'").strip()
+                    for ln in raw.strip().splitlines()
+                    if ln.strip()
+                ]
+                if len(lines) >= 2:
+                    vocabulary[idx_a] = lines[0]
+                    vocabulary[idx_b] = lines[1]
+                else:
+                    # Fallback: append a distinguishing suffix so we don't loop forever
+                    vocabulary[idx_b] = f"{current_name} II"
+
+                # After resolving this pair, remove them from the indices list
+                indices = indices[2:]
+
+    return vocabulary
 
 
 def assign_topics(

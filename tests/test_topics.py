@@ -14,7 +14,13 @@ from wst.cli import cli
 from wst.db import Database
 from wst.models import DocType, DocumentMetadata, LibraryEntry
 from wst.storage import build_dest_path
-from wst.topics import _parse_json_list, assign_topics, load_vocabulary, save_vocabulary
+from wst.topics import (
+    _deduplicate_vocabulary,
+    _parse_json_list,
+    assign_topics,
+    load_vocabulary,
+    save_vocabulary,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -247,6 +253,86 @@ class TestBuildVocabulary:
         assert isinstance(vocab, list)
         assert len(vocab) == 2
         assert "Matemáticas" in vocab
+
+
+# ---------------------------------------------------------------------------
+# _deduplicate_vocabulary
+# ---------------------------------------------------------------------------
+
+
+class TestDeduplicateVocabulary:
+    """Tests for the duplicate-name resolution logic."""
+
+    def _docs(self, titles: list[str], tags: list[str] | None = None) -> list[dict]:
+        return [{"title": t, "tags": tags or [], "summary": ""} for t in titles]
+
+    def test_no_duplicates_unchanged(self):
+        """When all names are already unique, vocabulary is left as-is."""
+        ai = _mock_ai("Álgebra Lineal\nAnálisis Vectorial")
+        vocab = ["Cálculo", "Álgebra Lineal", "Literatura"]
+        docs_map = [self._docs(["a"]), self._docs(["b"]), self._docs(["c"])]
+        result = _deduplicate_vocabulary(ai, vocab, docs_map)
+        assert result == ["Cálculo", "Álgebra Lineal", "Literatura"]
+        ai._run_claude.assert_not_called()
+
+    def test_two_duplicates_get_distinct_names(self):
+        """Two clusters with the same name are renamed to different names."""
+        # AI returns two distinct names when asked to disambiguate
+        ai = _mock_ai("Álgebra Lineal\nAnálisis Vectorial")
+        vocab = ["Álgebra Lineal", "Álgebra Lineal", "Literatura"]
+        docs_map = [
+            self._docs(["Matrices y Vectores"], ["matrices", "vectores"]),
+            self._docs(["Cálculo Vectorial"], ["gradiente", "divergencia"]),
+            self._docs(["Cien Años de Soledad"]),
+        ]
+        result = _deduplicate_vocabulary(ai, vocab, docs_map)
+        # The two previously-duplicate entries must now be different
+        assert result[0] != result[1]
+        assert result[2] == "Literatura"
+        ai._run_claude.assert_called_once()
+
+    def test_three_duplicates_resolved(self):
+        """Three clusters with the same name are all resolved to unique names."""
+        call_count = 0
+
+        def side_effect(prompt: str) -> str:
+            nonlocal call_count
+            call_count += 1
+            # First call: disambiguate clusters 0 and 1
+            if call_count == 1:
+                return "Álgebra Lineal\nAnálisis Vectorial"
+            # Second call: disambiguate cluster 2 (still "Álgebra Lineal") with next dup
+            return "Cálculo Tensorial\nGeometría Diferencial"
+
+        ai = MagicMock()
+        ai._run_claude.side_effect = side_effect
+
+        vocab = ["Álgebra Lineal", "Álgebra Lineal", "Álgebra Lineal"]
+        docs_map = [
+            self._docs(["Matrices"]),
+            self._docs(["Vectores"]),
+            self._docs(["Tensores"]),
+        ]
+        result = _deduplicate_vocabulary(ai, vocab, docs_map)
+        assert len(set(r.lower() for r in result)) == len(result), (
+            f"Expected all unique names, got {result}"
+        )
+
+    def test_fallback_when_ai_returns_one_line(self):
+        """When AI returns only one line, the second cluster gets a ' II' suffix."""
+        ai = _mock_ai("Álgebra Lineal")  # only one name returned
+        vocab = ["Álgebra Lineal", "Álgebra Lineal"]
+        docs_map = [self._docs(["A"]), self._docs(["B"])]
+        result = _deduplicate_vocabulary(ai, vocab, docs_map)
+        assert result[0] != result[1]
+
+    def test_case_insensitive_duplicate_detection(self):
+        """Duplicates are detected ignoring case differences."""
+        ai = _mock_ai("Álgebra Lineal\nAnálisis Vectorial")
+        vocab = ["álgebra lineal", "Álgebra Lineal"]
+        docs_map = [self._docs(["A"]), self._docs(["B"])]
+        result = _deduplicate_vocabulary(ai, vocab, docs_map)
+        assert result[0].lower() != result[1].lower()
 
 
 # ---------------------------------------------------------------------------
