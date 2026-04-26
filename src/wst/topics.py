@@ -19,9 +19,13 @@ from wst.db import Database
 # ---------------------------------------------------------------------------
 
 
-def _build_cluster_naming_prompt(cluster_docs: list[dict]) -> str:
+def _build_cluster_naming_prompt(cluster_docs: list[dict], used_names: list[str] | None = None) -> str:
     """Build a prompt asking Claude to name a cluster of documents."""
     docs_str = json.dumps(cluster_docs, ensure_ascii=False, indent=2)
+    used_names_section = ""
+    if used_names:
+        names_str = ", ".join(used_names)
+        used_names_section = f"\nNombres ya usados para otros clusters (NO repetir): {names_str}\n"
     return f"""You are helping build a topic vocabulary for an academic/personal library.
 
 Below are representative documents from a single cluster (grouped by semantic similarity).
@@ -34,7 +38,8 @@ Rules:
 - In Spanish.
 - General / high-level (not a specific subtopic).
 - Return ONLY the topic name, nothing else — no explanation, no punctuation, no quotes.
-
+- Choose a name DIFFERENT from any already-used names listed below.
+{used_names_section}
 Documents:
 {docs_str}"""
 
@@ -177,6 +182,7 @@ def build_vocabulary(
     # For each cluster, find 5 docs closest to centroid
     vocabulary: list[str] = []
     cluster_docs_map: list[list[dict]] = []
+    used_names: list[str] = []
     for cluster_idx in range(k):
         mask = labels == cluster_idx
         cluster_indices = np.where(mask)[0]
@@ -189,9 +195,11 @@ def build_vocabulary(
         closest = cluster_indices[np.argsort(dists)[:top_n]]
 
         cluster_docs = [doc_metas[i] for i in closest]
-        topic_name = _name_cluster(ai_backend, cluster_docs)
+        # Pass already-assigned names so the AI picks a different one upfront
+        topic_name = _name_cluster(ai_backend, cluster_docs, used_names=used_names)
         vocabulary.append(topic_name)
         cluster_docs_map.append(cluster_docs)
+        used_names.append(topic_name)
 
     # Resolve duplicate names (e.g. two clusters both named "Álgebra Lineal")
     _deduplicate_vocabulary(ai_backend, vocabulary, cluster_docs_map)
@@ -224,9 +232,20 @@ def _optimal_k(embeddings, min_k: int = 2, max_k: int = 20) -> int:
     return best_k
 
 
-def _name_cluster(ai_backend: AIBackend, cluster_docs: list[dict]) -> str:
-    """Ask the AI to name a cluster. Returns a clean 1-3 word string."""
-    prompt = _build_cluster_naming_prompt(cluster_docs)
+def _name_cluster(
+    ai_backend: AIBackend,
+    cluster_docs: list[dict],
+    used_names: list[str] | None = None,
+) -> str:
+    """Ask the AI to name a cluster. Returns a clean 1-3 word string.
+
+    Args:
+        ai_backend: The AI backend to use.
+        cluster_docs: Representative documents for the cluster.
+        used_names: Names already assigned to previous clusters so the AI can
+            avoid picking the same name again.
+    """
+    prompt = _build_cluster_naming_prompt(cluster_docs, used_names=used_names)
     result = _call_ai_raw(ai_backend, prompt)
     # Clean up any stray whitespace / quotes
     return result.strip().strip('"').strip("'").strip()

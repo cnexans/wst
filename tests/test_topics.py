@@ -15,7 +15,9 @@ from wst.db import Database
 from wst.models import DocType, DocumentMetadata, LibraryEntry
 from wst.storage import build_dest_path
 from wst.topics import (
+    _build_cluster_naming_prompt,
     _deduplicate_vocabulary,
+    _name_cluster,
     _parse_json_list,
     assign_topics,
     load_vocabulary,
@@ -253,6 +255,109 @@ class TestBuildVocabulary:
         assert isinstance(vocab, list)
         assert len(vocab) == 2
         assert "Matemáticas" in vocab
+
+
+# ---------------------------------------------------------------------------
+# _build_cluster_naming_prompt — used_names context injection
+# ---------------------------------------------------------------------------
+
+
+class TestBuildClusterNamingPrompt:
+    """Tests that used_names are correctly injected into the prompt."""
+
+    def _docs(self, titles: list[str]) -> list[dict]:
+        return [{"title": t, "tags": [], "summary": ""} for t in titles]
+
+    def test_no_used_names_omits_section(self):
+        """When used_names is empty/None, the prompt does not mention already-used names."""
+        prompt = _build_cluster_naming_prompt(self._docs(["Álgebra Lineal"]), used_names=None)
+        assert "Nombres ya usados" not in prompt
+
+    def test_empty_used_names_omits_section(self):
+        prompt = _build_cluster_naming_prompt(self._docs(["Álgebra Lineal"]), used_names=[])
+        assert "Nombres ya usados" not in prompt
+
+    def test_used_names_appear_in_prompt(self):
+        """When used_names is provided, each name appears in the prompt."""
+        used = ["Geometría Euclidiana", "Variable Compleja", "Álgebra Abstracta"]
+        prompt = _build_cluster_naming_prompt(self._docs(["Tensores"]), used_names=used)
+        assert "Nombres ya usados" in prompt
+        for name in used:
+            assert name in prompt
+
+    def test_used_names_section_has_no_repeat_instruction(self):
+        """The prompt explicitly tells the AI not to repeat the listed names."""
+        used = ["Cálculo"]
+        prompt = _build_cluster_naming_prompt(self._docs(["Integrales"]), used_names=used)
+        assert "NO repetir" in prompt
+
+
+# ---------------------------------------------------------------------------
+# _name_cluster — used_names forwarding
+# ---------------------------------------------------------------------------
+
+
+class TestNameCluster:
+    """Tests that _name_cluster forwards used_names to the AI prompt."""
+
+    def _docs(self, titles: list[str]) -> list[dict]:
+        return [{"title": t, "tags": [], "summary": ""} for t in titles]
+
+    def test_returns_cleaned_name(self):
+        """_name_cluster strips extra whitespace and quotes from the AI response."""
+        ai = _mock_ai('  "Cálculo"  ')
+        result = _name_cluster(ai, self._docs(["Integrales"]))
+        assert result == "Cálculo"
+
+    def test_used_names_passed_to_prompt(self):
+        """The prompt sent to the AI must include the used names when provided."""
+        captured_prompts: list[str] = []
+
+        ai = MagicMock()
+
+        def capture(prompt: str) -> str:
+            captured_prompts.append(prompt)
+            return "Física Cuántica"
+
+        ai._run_claude.side_effect = capture
+
+        used = ["Geometría Euclidiana", "Álgebra Abstracta"]
+        _name_cluster(ai, self._docs(["Mecánica Cuántica"]), used_names=used)
+
+        assert len(captured_prompts) == 1
+        prompt = captured_prompts[0]
+        for name in used:
+            assert name in prompt, f"Expected '{name}' in prompt but got: {prompt[:300]}"
+
+    def test_no_used_names_prompt_has_no_used_section(self):
+        """When no used_names provided, the prompt must not mention already-used names."""
+        captured_prompts: list[str] = []
+
+        ai = MagicMock()
+
+        def capture(prompt: str) -> str:
+            captured_prompts.append(prompt)
+            return "Cálculo"
+
+        ai._run_claude.side_effect = capture
+
+        _name_cluster(ai, self._docs(["Integrales"]), used_names=None)
+        assert "Nombres ya usados" not in captured_prompts[0]
+
+    def test_empty_used_names_prompt_has_no_used_section(self):
+        """Empty used_names list should not add the 'already used' section."""
+        captured_prompts: list[str] = []
+
+        ai = MagicMock()
+
+        def capture(prompt: str) -> str:
+            captured_prompts.append(prompt)
+            return "Cálculo"
+
+        ai._run_claude.side_effect = capture
+
+        _name_cluster(ai, self._docs(["Integrales"]), used_names=[])
+        assert "Nombres ya usados" not in captured_prompts[0]
 
 
 # ---------------------------------------------------------------------------
