@@ -593,3 +593,74 @@ class TestSearchByTopic:
             result = runner.invoke(cli, ["search", "--topic", "fisica"])
         assert result.exit_code == 0
         assert "No results" in result.output
+
+
+# ---------------------------------------------------------------------------
+# CLI: wst topics build -y (non-interactive)
+# ---------------------------------------------------------------------------
+
+
+class TestTopicsBuildNonInteractive:
+    """Verify that -y / non-human formats skip the interactive review step."""
+
+    def _prep_cfg(self, tmp_path):
+        from wst.config import WstConfig
+
+        lib = tmp_path / "library"
+        lib.mkdir(parents=True)
+        db_path = lib / "wst.db"
+        db = Database(db_path)
+        db.insert(_make_entry(title="Álgebra Lineal", file_hash="h1"))
+        db.insert(_make_entry(title="Cálculo Diferencial", file_hash="h2"))
+        db.close()
+        return WstConfig(
+            home_path=tmp_path,
+            inbox_path=tmp_path / "inbox",
+            library_path=lib,
+            db_path=db_path,
+        )
+
+    def test_topics_build_yes_flag_saves_without_prompt(self, tmp_path):
+        """With -y the vocabulary is saved directly; no interactive prompt is shown."""
+        cfg = self._prep_cfg(tmp_path)
+        fake_vocab = ["Matemáticas", "Ciencias"]
+
+        runner = CliRunner()
+        with (
+            patch("wst.cli.WstConfig", return_value=cfg),
+            patch("wst.topics.build_vocabulary", return_value=fake_vocab),
+            patch("wst.topics.assign_topics", return_value={1: ["Matemáticas"], 2: ["Ciencias"]}),
+            patch("wst.topics.save_vocabulary") as mock_save,
+        ):
+            result = runner.invoke(cli, ["topics", "build", "-y"])
+
+        assert result.exit_code == 0, result.output
+        # The interactive question must NOT appear
+        assert "¿Aceptás" not in result.output
+        # save_vocabulary must have been called with the original vocabulary
+        mock_save.assert_called_once()
+        saved_vocab = mock_save.call_args[0][1]
+        assert saved_vocab == fake_vocab
+
+    def test_topics_build_json_format_saves_without_prompt(self, tmp_path):
+        """With --format json the vocabulary is saved directly; no interactive prompt."""
+        cfg = self._prep_cfg(tmp_path)
+        fake_vocab = ["Física", "Literatura"]
+
+        runner = CliRunner()
+        with (
+            patch("wst.cli.WstConfig", return_value=cfg),
+            patch("wst.topics.build_vocabulary", return_value=fake_vocab),
+            patch("wst.topics.assign_topics", return_value={1: ["Física"], 2: ["Literatura"]}),
+            patch("wst.topics.save_vocabulary") as mock_save,
+        ):
+            result = runner.invoke(cli, ["--format", "json", "topics", "build", "-y"])
+
+        assert result.exit_code == 0, result.output
+        parsed = json.loads(result.output)
+        assert parsed["ok"] is True
+        assert parsed["data"]["vocabulary"] == fake_vocab
+        # save_vocabulary must have been called with the returned vocabulary
+        mock_save.assert_called_once()
+        saved_vocab = mock_save.call_args[0][1]
+        assert saved_vocab == fake_vocab

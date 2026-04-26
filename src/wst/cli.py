@@ -1668,6 +1668,15 @@ def topics_build(ctx: click.Context, n_topics: int | None, yes: bool) -> None:
 
         if fmt == "human":
             click.echo(f"          Generated {len(vocabulary)} topics: {', '.join(vocabulary)}")
+
+        # --- Interactive review/edit (human mode without -y) ---
+        if fmt == "human" and not yes:
+            vocabulary = _review_vocabulary_interactive(vocabulary)
+            if vocabulary is None:
+                click.echo("Cancelado.")
+                return
+
+        if fmt == "human":
             click.echo("Step 2/3  Assigning topics to documents...")
 
         assignments = assign_topics(db, ai, vocabulary)
@@ -1831,6 +1840,40 @@ def topics_assign(ctx: click.Context, doc_id: int | None, yes: bool) -> None:
         )
     finally:
         db.close()
+
+
+def _review_vocabulary_interactive(vocabulary: list[str]) -> list[str] | None:
+    """Show the generated vocabulary and let the user confirm, cancel, or edit topics.
+
+    Returns the (possibly edited) vocabulary list, or None if the user cancelled.
+    """
+    while True:
+        click.echo(f"\nTópicos generados ({len(vocabulary)}):")
+        for i, topic in enumerate(vocabulary, 1):
+            click.echo(f"  {i:>3}. {topic}")
+        click.echo("")
+
+        raw = input("¿Aceptás estos tópicos? [S/n/editar número]: ").strip()
+
+        if raw == "" or raw.lower() in ("s", "si", "sí", "y", "yes"):
+            return vocabulary
+
+        if raw.lower() in ("n", "no"):
+            return None
+
+        if raw.isdigit():
+            idx = int(raw)
+            if 1 <= idx <= len(vocabulary):
+                current = vocabulary[idx - 1]
+                click.echo(f'Tópico {idx} actual: "{current}"')
+                new_name = input("Nuevo nombre (Enter para mantener): ").strip()
+                if new_name:
+                    vocabulary = list(vocabulary)
+                    vocabulary[idx - 1] = new_name
+            else:
+                click.echo(f"Número fuera de rango. Ingresá un número entre 1 y {len(vocabulary)}.")
+        else:
+            click.echo("Opción no válida. Usá S (confirmar), n (cancelar) o un número para editar.")
 
 
 def _fix_topics_cmd(
