@@ -3,6 +3,7 @@ import {
   setDocuments,
   searchQuery,
   activeDocType,
+  activeTopic,
   sortBy,
   viewMode,
   setLibraryStats,
@@ -30,7 +31,9 @@ export default function App() {
   });
 
   createEffect(
-    on([searchQuery, activeDocType, sortBy], ([query, docType, sort]) => {
+    on(
+      [searchQuery, activeDocType, activeTopic, sortBy],
+      ([query, docType, topic, sort]) => {
       clearTimeout(debounceTimer);
       const currentFetch = ++fetchId;
 
@@ -38,9 +41,17 @@ export default function App() {
         try {
           let results;
           if (query.trim()) {
-            results = await searchDocuments(query, docType ?? undefined);
+            results = await searchDocuments(
+              query,
+              docType ?? undefined,
+              topic ?? undefined
+            );
           } else {
-            results = await listDocuments(docType ?? undefined, sort);
+            results = await listDocuments(
+              docType ?? undefined,
+              sort,
+              topic ?? undefined
+            );
           }
           // Only apply if this is still the latest fetch
           if (currentFetch === fetchId) {

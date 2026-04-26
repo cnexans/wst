@@ -8,6 +8,7 @@ export interface Document {
   isbn: string | null;
   language: string | null;
   tags: string[];
+  topics: string[];
   page_count: number | null;
   summary: string | null;
   toc: string | null;

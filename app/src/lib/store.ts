@@ -6,6 +6,7 @@ export const [searchQuery, setSearchQuery] = createSignal("");
 export const [activeDocType, setActiveDocType] = createSignal<string | null>(
   null
 );
+export const [activeTopic, setActiveTopic] = createSignal<string | null>(null);
 export const [viewMode, setViewMode] = createSignal<"grid" | "list">("grid");
 export const [sortBy, setSortBy] = createSignal("title");
 export const [selectedDoc, setSelectedDoc] = createSignal<Document | null>(

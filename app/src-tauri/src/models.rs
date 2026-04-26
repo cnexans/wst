@@ -11,6 +11,7 @@ pub struct Document {
     pub isbn: Option<String>,
     pub language: Option<String>,
     pub tags: Vec<String>,
+    pub topics: Vec<String>,
     pub page_count: Option<i32>,
     pub summary: Option<String>,
     pub toc: Option<String>,

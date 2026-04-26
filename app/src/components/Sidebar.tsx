@@ -1,17 +1,31 @@
-import { For } from "solid-js";
+import { For, createMemo, Show } from "solid-js";
 import {
   activeDocType,
   setActiveDocType,
+  activeTopic,
+  setActiveTopic,
   libraryStats,
+  documents,
 } from "../lib/store";
 import { DOC_TYPE_LABELS } from "../lib/types";
 
 export default function Sidebar() {
   const stats = () => libraryStats();
 
+  // Derive unique topics sorted alphabetically from all loaded documents
+  const allTopics = createMemo(() => {
+    const topicSet = new Set<string>();
+    for (const doc of documents()) {
+      for (const topic of doc.topics ?? []) {
+        if (topic) topicSet.add(topic);
+      }
+    }
+    return Array.from(topicSet).sort((a, b) => a.localeCompare(b));
+  });
+
   return (
     <nav class="sidebar">
-      <div class="sidebar-header">Library</div>
+      <div class="sidebar-section-label">Library</div>
       <ul class="sidebar-list">
         <li
           class={`sidebar-item ${activeDocType() === null ? "active" : ""}`}
@@ -32,6 +46,24 @@ export default function Sidebar() {
           )}
         </For>
       </ul>
+
+      <Show when={allTopics().length > 0}>
+        <div class="sidebar-section-label sidebar-section-label--topics">Topics</div>
+        <ul class="sidebar-list">
+          <For each={allTopics()}>
+            {(topic) => (
+              <li
+                class={`sidebar-item ${activeTopic() === topic ? "active" : ""}`}
+                onClick={() =>
+                  setActiveTopic(activeTopic() === topic ? null : topic)
+                }
+              >
+                <span class="sidebar-topic-name">{topic}</span>
+              </li>
+            )}
+          </For>
+        </ul>
+      </Show>
     </nav>
   );
 }

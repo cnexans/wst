@@ -16,7 +16,12 @@ impl Db {
         Ok(Db { conn })
     }
 
-    pub fn list_all(&self, doc_type: Option<&str>, sort_by: &str) -> Result<Vec<Document>> {
+    pub fn list_all(
+        &self,
+        doc_type: Option<&str>,
+        sort_by: &str,
+        topic: Option<&str>,
+    ) -> Result<Vec<Document>> {
         let sort_col = match sort_by {
             "author" => "author",
             "year" => "year",
@@ -24,19 +29,33 @@ impl Db {
             _ => "title",
         };
 
-        let (sql, params_vec): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = match doc_type {
-            Some(dt) => (
-                format!("SELECT * FROM documents WHERE doc_type = ? ORDER BY {sort_col}"),
-                vec![Box::new(dt.to_string())],
-            ),
-            None => (
-                format!("SELECT * FROM documents ORDER BY {sort_col}"),
-                vec![],
-            ),
+        let mut conditions: Vec<String> = vec![];
+        let mut params_vec: Vec<Box<dyn rusqlite::types::ToSql>> = vec![];
+
+        if let Some(dt) = doc_type {
+            conditions.push("doc_type = ?".to_string());
+            params_vec.push(Box::new(dt.to_string()));
+        }
+
+        if let Some(tp) = topic {
+            conditions.push(
+                "id IN (SELECT id FROM documents, json_each(documents.topics) WHERE json_each.value = ?)"
+                    .to_string(),
+            );
+            params_vec.push(Box::new(tp.to_string()));
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
         };
 
+        let sql = format!("SELECT * FROM documents {where_clause} ORDER BY {sort_col}");
+
         let mut stmt = self.conn.prepare(&sql)?;
-        let params_refs: Vec<&dyn rusqlite::types::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params_vec.iter().map(|p| p.as_ref()).collect();
         let rows = stmt.query_map(params_refs.as_slice(), |row| self.row_to_document(row))?;
 
         rows.collect()
@@ -46,33 +65,46 @@ impl Db {
         &self,
         query: &str,
         doc_type: Option<&str>,
+        topic: Option<&str>,
         _author: Option<&str>,
         _subject: Option<&str>,
     ) -> Result<Vec<Document>> {
         // Sanitize query for FTS5: remove special chars, add prefix matching
         let fts_query = Self::build_fts_query(query);
         if fts_query.is_empty() {
-            return self.list_all(doc_type, "title");
+            return self.list_all(doc_type, "title", topic);
         }
 
-        let (sql, params_vec): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = match doc_type {
-            Some(dt) => (
-                "SELECT d.* FROM documents d \
-                 JOIN documents_fts f ON d.id = f.rowid \
-                 WHERE documents_fts MATCH ?1 AND d.doc_type = ?2 \
-                 ORDER BY rank"
+        // Build extra conditions beyond the FTS MATCH
+        let mut extra_conditions: Vec<String> = vec![];
+        let mut params_vec: Vec<Box<dyn rusqlite::types::ToSql>> =
+            vec![Box::new(fts_query)];
+
+        if let Some(dt) = doc_type {
+            extra_conditions.push("d.doc_type = ?".to_string());
+            params_vec.push(Box::new(dt.to_string()));
+        }
+
+        if let Some(tp) = topic {
+            extra_conditions.push(
+                "d.id IN (SELECT id FROM documents, json_each(documents.topics) WHERE json_each.value = ?)"
                     .to_string(),
-                vec![Box::new(fts_query), Box::new(dt.to_string())],
-            ),
-            None => (
-                "SELECT d.* FROM documents d \
-                 JOIN documents_fts f ON d.id = f.rowid \
-                 WHERE documents_fts MATCH ?1 \
-                 ORDER BY rank"
-                    .to_string(),
-                vec![Box::new(fts_query)],
-            ),
+            );
+            params_vec.push(Box::new(tp.to_string()));
+        }
+
+        let extra_where = if extra_conditions.is_empty() {
+            String::new()
+        } else {
+            format!(" AND {}", extra_conditions.join(" AND "))
         };
+
+        let sql = format!(
+            "SELECT d.* FROM documents d \
+             JOIN documents_fts f ON d.id = f.rowid \
+             WHERE documents_fts MATCH ?1{extra_where} \
+             ORDER BY rank"
+        );
 
         let mut stmt = self.conn.prepare(&sql)?;
         let params_refs: Vec<&dyn rusqlite::types::ToSql> =
@@ -129,6 +161,11 @@ impl Db {
         let tags_json: String = row.get::<_, Option<String>>("tags")?.unwrap_or_default();
         let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
 
+        let topics_json: String = row
+            .get::<_, Option<String>>("topics")?
+            .unwrap_or_default();
+        let topics: Vec<String> = serde_json::from_str(&topics_json).unwrap_or_default();
+
         Ok(Document {
             id: row.get("id")?,
             title: row.get("title")?,
@@ -139,6 +176,7 @@ impl Db {
             isbn: row.get("isbn")?,
             language: row.get("language")?,
             tags,
+            topics,
             page_count: row.get("page_count")?,
             summary: row.get("summary")?,
             toc: row.get("toc")?,

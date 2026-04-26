@@ -37,8 +37,7 @@ export default function BookDetail() {
     setEditDocType(d.doc_type);
     setEditYear(d.year?.toString() ?? "");
     setEditTags(d.tags.join(", "));
-    // topics not in Document type yet — leave blank for now
-    setEditTopics("");
+    setEditTopics((d.topics ?? []).join(", "));
     setSaveError(null);
     setEditing(true);
   };
@@ -155,6 +154,17 @@ export default function BookDetail() {
                     <div class="meta-tags">
                       <For each={d().tags}>
                         {(tag) => <span class="tag">{tag}</span>}
+                      </For>
+                    </div>
+                  </div>
+                </Show>
+
+                <Show when={(d().topics ?? []).length > 0}>
+                  <div class="meta-row">
+                    <span class="meta-label">Topics</span>
+                    <div class="meta-tags">
+                      <For each={d().topics}>
+                        {(topic) => <span class="tag tag--topic">{topic}</span>}
                       </For>
                     </div>
                   </div>

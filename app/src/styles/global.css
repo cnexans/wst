@@ -154,6 +154,27 @@ body {
   color: var(--text-muted);
 }
 
+.sidebar-section-label {
+  padding: 0 16px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+}
+
+.sidebar-section-label--topics {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.sidebar-topic-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .sidebar-list {
   list-style: none;
 }
@@ -527,6 +548,11 @@ body {
   border-radius: 12px;
   font-size: 12px;
   color: var(--text-muted);
+}
+
+.tag--topic {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
 }
 
 .meta-toc {
