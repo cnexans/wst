@@ -1,0 +1,17 @@
+{
+  "identifier": "default",
+  "description": "Default capability for the main window",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:default",
+    "core:window:allow-close",
+    "core:window:allow-set-title",
+    {
+      "identifier": "core:image:default"
+    },
+    {
+      "identifier": "core:resources:default"
+    }
+  ]
+}
