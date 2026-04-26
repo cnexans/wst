@@ -5,22 +5,14 @@ from pydantic import BaseModel, Field
 
 class DocType(StrEnum):
     BOOK = "book"
-    NOVEL = "novel"
-    TEXTBOOK = "textbook"
     PAPER = "paper"
-    CLASS_NOTES = "class-notes"
-    EXERCISES = "exercises"
     GUIDE_THEORY = "guide-theory"
     GUIDE_PRACTICE = "guide-practice"
 
 
 DOCTYPE_FOLDER: dict[DocType, str] = {
     DocType.BOOK: "books",
-    DocType.NOVEL: "books",
-    DocType.TEXTBOOK: "books",
     DocType.PAPER: "papers",
-    DocType.CLASS_NOTES: "notes",
-    DocType.EXERCISES: "exercises",
     DocType.GUIDE_THEORY: "guides",
     DocType.GUIDE_PRACTICE: "guides",
 }
@@ -35,6 +27,7 @@ class DocumentMetadata(BaseModel):
     isbn: str | None = None
     language: str | None = None
     tags: list[str] = Field(default_factory=list)
+    topics: list[str] = Field(default_factory=list)
     page_count: int | None = None
     summary: str | None = None
     table_of_contents: str | None = None
