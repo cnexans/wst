@@ -4,25 +4,33 @@ import type { Document, LibraryStats } from "./types";
 export async function listDocuments(
   docType?: string,
   sortBy?: string,
-  topic?: string
+  topic?: string,
+  subject?: string
 ): Promise<Document[]> {
   return invoke("list_documents", {
     docType: docType ?? null,
     sortBy: sortBy ?? null,
     topic: topic ?? null,
+    subject: subject ?? null,
   });
 }
 
 export async function searchDocuments(
   query: string,
   docType?: string,
-  topic?: string
+  topic?: string,
+  subject?: string
 ): Promise<Document[]> {
   return invoke("search_documents", {
     query,
     docType: docType ?? null,
     topic: topic ?? null,
+    subject: subject ?? null,
   });
+}
+
+export async function getSubjects(): Promise<string[]> {
+  return invoke("get_subjects");
 }
 
 export async function getDocument(id: number): Promise<Document | null> {

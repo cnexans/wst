@@ -66,6 +66,7 @@ pub fn run() {
             commands::get_document,
             commands::get_library_stats,
             commands::get_topics_vocabulary,
+            commands::get_subjects,
             commands::get_cover,
             commands::open_pdf,
             commands::reveal_in_finder,

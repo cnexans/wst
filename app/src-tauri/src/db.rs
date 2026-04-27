@@ -21,6 +21,7 @@ impl Db {
         doc_type: Option<&str>,
         sort_by: &str,
         topic: Option<&str>,
+        subject: Option<&str>,
     ) -> Result<Vec<Document>> {
         let sort_col = match sort_by {
             "author" => "author",
@@ -45,6 +46,11 @@ impl Db {
             params_vec.push(Box::new(tp.to_string()));
         }
 
+        if let Some(subj) = subject {
+            conditions.push("subject LIKE ?".to_string());
+            params_vec.push(Box::new(format!("%{}%", subj)));
+        }
+
         let where_clause = if conditions.is_empty() {
             String::new()
         } else {
@@ -66,13 +72,12 @@ impl Db {
         query: &str,
         doc_type: Option<&str>,
         topic: Option<&str>,
-        _author: Option<&str>,
-        _subject: Option<&str>,
+        subject: Option<&str>,
     ) -> Result<Vec<Document>> {
         // Sanitize query for FTS5: remove special chars, add prefix matching
         let fts_query = Self::build_fts_query(query);
         if fts_query.is_empty() {
-            return self.list_all(doc_type, "title", topic);
+            return self.list_all(doc_type, "title", topic, subject);
         }
 
         // Build extra conditions beyond the FTS MATCH
@@ -91,6 +96,11 @@ impl Db {
                     .to_string(),
             );
             params_vec.push(Box::new(tp.to_string()));
+        }
+
+        if let Some(subj) = subject {
+            extra_conditions.push("d.subject LIKE ?".to_string());
+            params_vec.push(Box::new(format!("%{}%", subj)));
         }
 
         let extra_where = if extra_conditions.is_empty() {
@@ -148,6 +158,14 @@ impl Db {
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(vec![]),
             Err(e) => Err(e),
         }
+    }
+
+    pub fn get_subjects(&self) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT subject FROM documents WHERE subject IS NOT NULL AND subject != '' ORDER BY subject"
+        )?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        rows.collect()
     }
 
     pub fn get_library_stats(&self) -> Result<LibraryStats> {

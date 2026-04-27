@@ -4,11 +4,20 @@ import {
   searchQuery,
   activeDocType,
   activeTopic,
+  activeSubject,
   sortBy,
   viewMode,
   setLibraryStats,
+  setAllTopicsVocab,
+  setAllSubjects,
 } from "./lib/store";
-import { listDocuments, searchDocuments, getLibraryStats } from "./lib/tauri";
+import {
+  listDocuments,
+  searchDocuments,
+  getLibraryStats,
+  getTopicsVocabulary,
+  getSubjects,
+} from "./lib/tauri";
 import SearchBar from "./components/SearchBar";
 import Sidebar from "./components/Sidebar";
 import Toolbar from "./components/Toolbar";
@@ -22,57 +31,62 @@ export default function App() {
   const [fading, setFading] = createSignal(false);
 
   onMount(async () => {
-    const [stats, docs] = await Promise.all([
+    const [stats, docs, vocab, subjects] = await Promise.all([
       getLibraryStats(),
       listDocuments(),
+      getTopicsVocabulary(),
+      getSubjects(),
     ]);
     setLibraryStats(stats);
     setDocuments(docs);
+    setAllTopicsVocab(vocab);
+    setAllSubjects(subjects);
   });
 
   createEffect(
     on(
-      [searchQuery, activeDocType, activeTopic, sortBy],
-      ([query, docType, topic, sort]) => {
-      clearTimeout(debounceTimer);
-      const currentFetch = ++fetchId;
+      [searchQuery, activeDocType, activeTopic, activeSubject, sortBy],
+      ([query, docType, topic, subject, sort]) => {
+        clearTimeout(debounceTimer);
+        const currentFetch = ++fetchId;
 
-      const doFetch = async () => {
-        try {
-          let results;
-          if (query.trim()) {
-            results = await searchDocuments(
-              query,
-              docType ?? undefined,
-              topic ?? undefined
-            );
-          } else {
-            results = await listDocuments(
-              docType ?? undefined,
-              sort,
-              topic ?? undefined
-            );
+        const doFetch = async () => {
+          try {
+            let results;
+            if (query.trim()) {
+              results = await searchDocuments(
+                query,
+                docType ?? undefined,
+                topic ?? undefined,
+                subject ?? undefined
+              );
+            } else {
+              results = await listDocuments(
+                docType ?? undefined,
+                sort,
+                topic ?? undefined,
+                subject ?? undefined
+              );
+            }
+            if (currentFetch === fetchId) {
+              setFading(true);
+              requestAnimationFrame(() => {
+                setDocuments(results);
+                requestAnimationFrame(() => setFading(false));
+              });
+            }
+          } catch (e) {
+            console.error("Search error:", e);
           }
-          // Only apply if this is still the latest fetch
-          if (currentFetch === fetchId) {
-            setFading(true);
-            requestAnimationFrame(() => {
-              setDocuments(results);
-              // Let the browser paint the new content, then fade in
-              requestAnimationFrame(() => setFading(false));
-            });
-          }
-        } catch (e) {
-          console.error("Search error:", e);
+        };
+
+        if (query.trim()) {
+          debounceTimer = window.setTimeout(doFetch, 250);
+        } else {
+          doFetch();
         }
-      };
-
-      if (query.trim()) {
-        debounceTimer = window.setTimeout(doFetch, 250);
-      } else {
-        doFetch();
       }
-    })
+    )
   );
 
   return (

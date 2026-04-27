@@ -137,9 +137,8 @@ body {
 
 /* Sidebar */
 .sidebar {
-  width: 180px;
-  min-width: 140px;
-  max-width: 320px;
+  min-width: 160px;
+  max-width: 360px;
   background: var(--bg-sidebar);
   border-right: 1px solid var(--border);
   padding: 16px 0;
@@ -192,6 +191,69 @@ body.resizing {
   margin-top: 16px;
   padding-top: 12px;
   border-top: 1px solid var(--border);
+}
+
+.sidebar-section-sep {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.sidebar-active-filters {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 16px 4px;
+}
+
+.sidebar-active-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--accent);
+}
+
+.sidebar-clear-btn {
+  background: none;
+  border: none;
+  font-size: 11px;
+  color: var(--text-faint);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+}
+
+.sidebar-clear-btn:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.sidebar-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0 16px 10px;
+}
+
+.sidebar-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  background: var(--accent);
+  color: white;
+  border-radius: 12px;
+  font-size: 11px;
+  cursor: pointer;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-chip:hover {
+  opacity: 0.85;
 }
 
 .sidebar-topic-name {

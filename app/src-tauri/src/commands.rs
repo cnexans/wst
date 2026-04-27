@@ -14,6 +14,7 @@ pub fn list_documents(
     doc_type: Option<String>,
     sort_by: Option<String>,
     topic: Option<String>,
+    subject: Option<String>,
     state: State<DbState>,
 ) -> Result<Vec<Document>, String> {
     let db = state.0.lock().map_err(|e| e.to_string())?;
@@ -21,6 +22,7 @@ pub fn list_documents(
         doc_type.as_deref(),
         sort_by.as_deref().unwrap_or("title"),
         topic.as_deref(),
+        subject.as_deref(),
     )
     .map_err(|e| e.to_string())
 }
@@ -30,11 +32,18 @@ pub fn search_documents(
     query: String,
     doc_type: Option<String>,
     topic: Option<String>,
+    subject: Option<String>,
     state: State<DbState>,
 ) -> Result<Vec<Document>, String> {
     let db = state.0.lock().map_err(|e| e.to_string())?;
-    db.search(&query, doc_type.as_deref(), topic.as_deref(), None, None)
+    db.search(&query, doc_type.as_deref(), topic.as_deref(), subject.as_deref())
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_subjects(state: State<DbState>) -> Result<Vec<String>, String> {
+    let db = state.0.lock().map_err(|e| e.to_string())?;
+    db.get_subjects().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
