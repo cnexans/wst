@@ -74,6 +74,8 @@ export async function backupToIcloud(): Promise<string> {
   return invoke("backup_to_icloud");
 }
 
-export async function backupDocumentToIcloud(filePath: string): Promise<string> {
-  return invoke("backup_document_to_icloud", { filePath });
+export async function backupDocumentToIcloud(id: number): Promise<void> {
+  await invoke<string>("run_wst_command", {
+    args: ["backup", "icloud", String(id), "--format", "json", "-y"],
+  });
 }

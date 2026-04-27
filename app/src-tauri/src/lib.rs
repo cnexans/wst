@@ -71,7 +71,6 @@ pub fn run() {
             commands::open_pdf,
             commands::reveal_in_finder,
             commands::run_wst_command,
-            commands::backup_document_to_icloud,
             commands::backup_to_icloud,
         ])
         .run(tauri::generate_context!())

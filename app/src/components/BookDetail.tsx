@@ -92,9 +92,9 @@ export default function BookDetail() {
     }
   };
 
-  const handleBackup = async (filePath: string) => {
+  const handleBackup = async (id: number) => {
     try {
-      await backupDocumentToIcloud(filePath);
+      await backupDocumentToIcloud(id);
       setBackupError(false);
       setBackupStatus("Guardado en iCloud ✓");
     } catch (err) {
@@ -154,8 +154,8 @@ export default function BookDetail() {
                   </button>
                   <button
                     class="btn btn-secondary"
-                    onClick={() => handleBackup(d().file_path)}
-                    title="Copiar a iCloud Drive/WanShiTong"
+                    onClick={() => handleBackup(d().id)}
+                    title="Backup a iCloud"
                   >
                     ☁ iCloud
                   </button>
