@@ -1,6 +1,6 @@
 import { Show, For, createSignal, createEffect } from "solid-js";
 import { selectedDoc, setSelectedDoc, setDocuments, documents } from "../lib/store";
-import { openPdf, revealInFinder, getCover, editDocument } from "../lib/tauri";
+import { openPdf, revealInFinder, getCover, editDocument, getTopicsVocabulary } from "../lib/tauri";
 import { DOC_TYPE_LABELS } from "../lib/types";
 import type { Document } from "../lib/types";
 
@@ -17,7 +17,8 @@ export default function BookDetail() {
   const [editDocType, setEditDocType] = createSignal("");
   const [editYear, setEditYear] = createSignal("");
   const [editTags, setEditTags] = createSignal("");
-  const [editTopics, setEditTopics] = createSignal("");
+  const [editTopics, setEditTopics] = createSignal<string[]>([]);
+  const [vocabulary, setVocabulary] = createSignal<string[]>([]);
 
   createEffect(async () => {
     const d = doc();
@@ -29,7 +30,7 @@ export default function BookDetail() {
     }
   });
 
-  const openEditPanel = () => {
+  const openEditPanel = async () => {
     const d = doc();
     if (!d) return;
     setEditTitle(d.title);
@@ -37,9 +38,15 @@ export default function BookDetail() {
     setEditDocType(d.doc_type);
     setEditYear(d.year?.toString() ?? "");
     setEditTags(d.tags.join(", "));
-    setEditTopics((d.topics ?? []).join(", "));
+    setEditTopics(d.topics ?? []);
     setSaveError(null);
     setEditing(true);
+    try {
+      const vocab = await getTopicsVocabulary();
+      setVocabulary(vocab);
+    } catch {
+      setVocabulary([]);
+    }
   };
 
   const cancelEdit = () => {
@@ -59,7 +66,9 @@ export default function BookDetail() {
 
     const currentTags = d.tags.join(", ");
     if (editTags() !== currentTags) fields["tags"] = editTags();
-    if (editTopics() !== "") fields["topics"] = editTopics();
+    const topicsStr = editTopics().join(", ");
+    const originalTopicsStr = (d.topics ?? []).join(", ");
+    if (topicsStr !== originalTopicsStr) fields["topics"] = topicsStr;
 
     if (Object.keys(fields).length === 0) {
       setEditing(false);
@@ -247,13 +256,33 @@ export default function BookDetail() {
 
                 <div class="edit-field">
                   <label class="edit-label">Topics</label>
-                  <input
-                    class="edit-input"
-                    type="text"
-                    value={editTopics()}
-                    onInput={(e) => setEditTopics(e.currentTarget.value)}
-                    placeholder="comma-separated, e.g. algebra, topology"
-                  />
+                  <Show
+                    when={vocabulary().length > 0}
+                    fallback={
+                      <p class="edit-hint">No topic vocabulary found. Run <code>wst topics build</code> first.</p>
+                    }
+                  >
+                    <div class="edit-topics-list">
+                      <For each={vocabulary()}>
+                        {(topic) => (
+                          <label class="edit-topic-item">
+                            <input
+                              type="checkbox"
+                              checked={editTopics().includes(topic)}
+                              onChange={(e) => {
+                                if (e.currentTarget.checked) {
+                                  setEditTopics([...editTopics(), topic]);
+                                } else {
+                                  setEditTopics(editTopics().filter((t) => t !== topic));
+                                }
+                              }}
+                            />
+                            <span>{topic}</span>
+                          </label>
+                        )}
+                      </For>
+                    </div>
+                  </Show>
                 </div>
 
                 <Show when={saveError()}>

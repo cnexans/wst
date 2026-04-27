@@ -33,6 +33,10 @@ export async function getLibraryStats(): Promise<LibraryStats> {
   return invoke("get_library_stats");
 }
 
+export async function getTopicsVocabulary(): Promise<string[]> {
+  return invoke("get_topics_vocabulary");
+}
+
 export async function getCover(id: number): Promise<string | null> {
   return invoke("get_cover", { id });
 }
@@ -56,4 +60,8 @@ export async function editDocument(
   const raw = await invoke<string>("run_wst_command", { args });
   const result = JSON.parse(raw);
   return result.data.entry;
+}
+
+export async function backupToIcloud(): Promise<string> {
+  return invoke("backup_to_icloud");
 }

@@ -1,11 +1,39 @@
+import { createSignal } from "solid-js";
 import { viewMode, setViewMode, sortBy, setSortBy, documents } from "../lib/store";
+import { backupToIcloud } from "../lib/tauri";
 
 export default function Toolbar() {
+  const [backupStatus, setBackupStatus] = createSignal<string | null>(null);
+  const [backupError, setBackupError] = createSignal(false);
+
+  async function handleBackup() {
+    try {
+      await backupToIcloud();
+      setBackupError(false);
+      setBackupStatus("Backed up to iCloud ✓");
+    } catch (err) {
+      setBackupError(true);
+      setBackupStatus(String(err));
+    } finally {
+      setTimeout(() => setBackupStatus(null), 3000);
+    }
+  }
+
   return (
     <div class="toolbar">
       <span class="toolbar-count">{documents().length} documents</span>
 
       <div class="toolbar-controls">
+        {backupStatus() !== null && (
+          <span class={`toolbar-backup-status${backupError() ? " toolbar-backup-status--error" : ""}`}>
+            {backupStatus()}
+          </span>
+        )}
+
+        <button class="btn btn-secondary" onClick={handleBackup}>
+          Backup to iCloud
+        </button>
+
         <select
           class="toolbar-sort"
           value={sortBy()}

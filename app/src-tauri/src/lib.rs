@@ -65,10 +65,12 @@ pub fn run() {
             commands::search_documents,
             commands::get_document,
             commands::get_library_stats,
+            commands::get_topics_vocabulary,
             commands::get_cover,
             commands::open_pdf,
             commands::reveal_in_finder,
             commands::run_wst_command,
+            commands::backup_to_icloud,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Wan Shi Tong");

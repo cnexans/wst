@@ -39,7 +39,7 @@ impl Db {
 
         if let Some(tp) = topic {
             conditions.push(
-                "id IN (SELECT id FROM documents, json_each(documents.topics) WHERE json_each.value = ?)"
+                "EXISTS (SELECT 1 FROM json_each(documents.topics) WHERE value = ?)"
                     .to_string(),
             );
             params_vec.push(Box::new(tp.to_string()));
@@ -87,7 +87,7 @@ impl Db {
 
         if let Some(tp) = topic {
             extra_conditions.push(
-                "d.id IN (SELECT id FROM documents, json_each(documents.topics) WHERE json_each.value = ?)"
+                "EXISTS (SELECT 1 FROM json_each(d.topics) WHERE value = ?)"
                     .to_string(),
             );
             params_vec.push(Box::new(tp.to_string()));
@@ -135,6 +135,19 @@ impl Db {
         let mut stmt = self.conn.prepare("SELECT * FROM documents WHERE id = ?1")?;
         let mut rows = stmt.query_map(params![id], |row| self.row_to_document(row))?;
         Ok(rows.next().transpose()?)
+    }
+
+    pub fn get_topics_vocabulary(&self) -> Result<Vec<String>> {
+        let result = self.conn.query_row(
+            "SELECT topics FROM topics_vocabulary WHERE id = 1",
+            [],
+            |row| row.get::<_, String>(0),
+        );
+        match result {
+            Ok(json) => Ok(serde_json::from_str(&json).unwrap_or_default()),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(vec![]),
+            Err(e) => Err(e),
+        }
     }
 
     pub fn get_library_stats(&self) -> Result<LibraryStats> {

@@ -44,6 +44,12 @@ pub fn get_document(id: i64, state: State<DbState>) -> Result<Option<Document>, 
 }
 
 #[tauri::command]
+pub fn get_topics_vocabulary(state: State<DbState>) -> Result<Vec<String>, String> {
+    let db = state.0.lock().map_err(|e| e.to_string())?;
+    db.get_topics_vocabulary().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn get_library_stats(state: State<DbState>) -> Result<LibraryStats, String> {
     let db = state.0.lock().map_err(|e| e.to_string())?;
     db.get_library_stats().map_err(|e| e.to_string())
@@ -100,4 +106,47 @@ fn which_wst() -> String {
         }
     }
     "wst".to_string()
+}
+
+#[tauri::command]
+pub fn backup_to_icloud(library_path: State<LibraryPath>) -> Result<String, String> {
+    let home = dirs::home_dir().ok_or("Could not determine home directory")?;
+    let icloud_root = home.join("Library/Mobile Documents/com~apple~CloudDocs");
+    if !icloud_root.exists() {
+        return Err("iCloud Drive is not available on this system".to_string());
+    }
+
+    let dest = icloud_root.join("WanShiTong");
+    std::fs::create_dir_all(&dest).map_err(|e| format!("Failed to create destination folder: {}", e))?;
+
+    // Copy wst.db
+    let src_db = library_path.0.join("wst.db");
+    let dest_db = dest.join("wst.db");
+    std::fs::copy(&src_db, &dest_db)
+        .map_err(|e| format!("Failed to copy wst.db: {}", e))?;
+
+    // Copy .covers/ recursively (only if it exists)
+    let src_covers = library_path.0.join(".covers");
+    if src_covers.exists() {
+        let dest_covers = dest.join(".covers");
+        copy_dir_all(&src_covers, &dest_covers)
+            .map_err(|e| format!("Failed to copy .covers: {}", e))?;
+    }
+
+    Ok(dest.to_string_lossy().to_string())
+}
+
+fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let dest_path = dst.join(entry.file_name());
+        if file_type.is_dir() {
+            copy_dir_all(&entry.path(), &dest_path)?;
+        } else {
+            std::fs::copy(entry.path(), dest_path)?;
+        }
+    }
+    Ok(())
 }
