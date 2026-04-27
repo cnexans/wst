@@ -3,7 +3,7 @@ PLANTUML_OUT = docs/images
 PLANTUML_SRC = $(wildcard $(PLANTUML_DIR)/*.puml)
 PLANTUML_PNG = $(patsubst $(PLANTUML_DIR)/%.puml,$(PLANTUML_OUT)/%.png,$(PLANTUML_SRC))
 
-.PHONY: docs clean-docs install install-topics test lint
+.PHONY: docs clean-docs install install-topics build-app install-app build-install test lint
 
 docs: $(PLANTUML_PNG)
 	@echo "PlantUML diagrams compiled to $(PLANTUML_OUT)/"
@@ -13,8 +13,16 @@ $(PLANTUML_OUT)/%.png: $(PLANTUML_DIR)/%.puml
 	plantuml -tpng -o $(CURDIR)/$(PLANTUML_OUT) $<
 
 install:
-	python3 -m venv .venv
-	.venv/bin/pip install -e ".[dev]"
+	pipx install --editable . 2>/dev/null || pipx upgrade wst-library
+
+build-app:
+	cd app && npm install && npx tauri build
+
+install-app:
+	cp -rf "app/src-tauri/target/release/bundle/macos/Wan Shi Tong.app" "/Applications/Wan Shi Tong.app"
+
+build-install: build-app install-app
+	@echo "Wan Shi Tong installed to /Applications"
 
 # Install ML/topics dependencies.
 # On macOS with Python 3.14+ (Homebrew), pip may fail with a libexpat symbol
