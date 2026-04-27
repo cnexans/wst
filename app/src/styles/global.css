@@ -138,11 +138,36 @@ body {
 /* Sidebar */
 .sidebar {
   width: 180px;
-  min-width: 180px;
+  min-width: 140px;
+  max-width: 320px;
   background: var(--bg-sidebar);
   border-right: 1px solid var(--border);
   padding: 16px 0;
   overflow-y: auto;
+  position: relative;
+  flex-shrink: 0;
+}
+
+.sidebar-resize-handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 4px;
+  height: 100%;
+  cursor: ew-resize;
+  z-index: 10;
+  transition: background var(--transition);
+}
+
+.sidebar-resize-handle:hover,
+.sidebar-resize-handle:active {
+  background: var(--accent);
+  opacity: 0.4;
+}
+
+body.resizing {
+  cursor: ew-resize !important;
+  user-select: none !important;
 }
 
 .sidebar-header {

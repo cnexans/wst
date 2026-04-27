@@ -1,4 +1,4 @@
-import { For, createMemo, Show } from "solid-js";
+import { For, createMemo, Show, createSignal, onCleanup } from "solid-js";
 import {
   activeDocType,
   setActiveDocType,
@@ -9,8 +9,20 @@ import {
 } from "../lib/store";
 import { DOC_TYPE_LABELS } from "../lib/types";
 
+const STORAGE_KEY = "wst.sidebarWidth";
+const MIN_WIDTH = 140;
+const MAX_WIDTH = 320;
+const DEFAULT_WIDTH = 180;
+
 export default function Sidebar() {
   const stats = () => libraryStats();
+
+  const savedWidth = parseInt(localStorage.getItem(STORAGE_KEY) ?? "", 10);
+  const initialWidth = Number.isFinite(savedWidth)
+    ? Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, savedWidth))
+    : DEFAULT_WIDTH;
+
+  const [width, setWidth] = createSignal(initialWidth);
 
   // Derive unique topics sorted alphabetically from all loaded documents
   const allTopics = createMemo(() => {
@@ -23,8 +35,39 @@ export default function Sidebar() {
     return Array.from(topicSet).sort((a, b) => a.localeCompare(b));
   });
 
+  let startX = 0;
+  let startWidth = 0;
+
+  function onMouseMove(e: MouseEvent) {
+    const delta = e.clientX - startX;
+    const next = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, startWidth + delta));
+    setWidth(next);
+  }
+
+  function onMouseUp() {
+    document.removeEventListener("mousemove", onMouseMove);
+    document.removeEventListener("mouseup", onMouseUp);
+    document.body.classList.remove("resizing");
+    localStorage.setItem(STORAGE_KEY, String(width()));
+  }
+
+  function onHandleMouseDown(e: MouseEvent) {
+    e.preventDefault();
+    startX = e.clientX;
+    startWidth = width();
+    document.body.classList.add("resizing");
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  }
+
+  onCleanup(() => {
+    document.removeEventListener("mousemove", onMouseMove);
+    document.removeEventListener("mouseup", onMouseUp);
+    document.body.classList.remove("resizing");
+  });
+
   return (
-    <nav class="sidebar">
+    <nav class="sidebar" style={{ width: `${width()}px` }}>
       <div class="sidebar-section-label">Library</div>
       <ul class="sidebar-list">
         <li
@@ -64,6 +107,8 @@ export default function Sidebar() {
           </For>
         </ul>
       </Show>
+
+      <div class="sidebar-resize-handle" onMouseDown={onHandleMouseDown} />
     </nav>
   );
 }
