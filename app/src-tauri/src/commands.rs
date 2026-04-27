@@ -118,6 +118,26 @@ fn which_wst() -> String {
 }
 
 #[tauri::command]
+pub fn backup_document_to_icloud(
+    file_path: String,
+    library_path: State<LibraryPath>,
+) -> Result<String, String> {
+    let home = dirs::home_dir().ok_or("Could not determine home directory")?;
+    let icloud_root = home.join("Library/Mobile Documents/com~apple~CloudDocs");
+    if !icloud_root.exists() {
+        return Err("iCloud Drive no está disponible en este sistema".to_string());
+    }
+    let dest_dir = icloud_root.join("WanShiTong");
+    std::fs::create_dir_all(&dest_dir)
+        .map_err(|e| format!("No se pudo crear la carpeta: {}", e))?;
+    let src = library_path.0.join(&file_path);
+    let filename = src.file_name().ok_or("Ruta de archivo inválida")?;
+    let dest = dest_dir.join(filename);
+    std::fs::copy(&src, &dest).map_err(|e| format!("No se pudo copiar el archivo: {}", e))?;
+    Ok(dest.to_string_lossy().to_string())
+}
+
+#[tauri::command]
 pub fn backup_to_icloud(library_path: State<LibraryPath>) -> Result<String, String> {
     let home = dirs::home_dir().ok_or("Could not determine home directory")?;
     let icloud_root = home.join("Library/Mobile Documents/com~apple~CloudDocs");

@@ -73,3 +73,7 @@ export async function editDocument(
 export async function backupToIcloud(): Promise<string> {
   return invoke("backup_to_icloud");
 }
+
+export async function backupDocumentToIcloud(filePath: string): Promise<string> {
+  return invoke("backup_document_to_icloud", { filePath });
+}

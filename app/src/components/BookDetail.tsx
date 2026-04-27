@@ -1,6 +1,6 @@
 import { Show, For, createSignal, createEffect } from "solid-js";
 import { selectedDoc, setSelectedDoc, setDocuments, documents } from "../lib/store";
-import { openPdf, revealInFinder, getCover, editDocument, getTopicsVocabulary } from "../lib/tauri";
+import { openPdf, revealInFinder, getCover, editDocument, getTopicsVocabulary, backupDocumentToIcloud } from "../lib/tauri";
 import { DOC_TYPE_LABELS } from "../lib/types";
 import type { Document } from "../lib/types";
 
@@ -10,6 +10,8 @@ export default function BookDetail() {
   const [editing, setEditing] = createSignal(false);
   const [saving, setSaving] = createSignal(false);
   const [saveError, setSaveError] = createSignal<string | null>(null);
+  const [backupStatus, setBackupStatus] = createSignal<string | null>(null);
+  const [backupError, setBackupError] = createSignal(false);
 
   // Edit form fields
   const [editTitle, setEditTitle] = createSignal("");
@@ -90,6 +92,19 @@ export default function BookDetail() {
     }
   };
 
+  const handleBackup = async (filePath: string) => {
+    try {
+      await backupDocumentToIcloud(filePath);
+      setBackupError(false);
+      setBackupStatus("Guardado en iCloud ✓");
+    } catch (err) {
+      setBackupError(true);
+      setBackupStatus(String(err));
+    } finally {
+      setTimeout(() => setBackupStatus(null), 3000);
+    }
+  };
+
   const close = () => {
     setEditing(false);
     setSelectedDoc(null);
@@ -129,21 +144,33 @@ export default function BookDetail() {
                     class="btn btn-primary"
                     onClick={() => openPdf(d().file_path)}
                   >
-                    Open PDF
+                    Abrir PDF
                   </button>
                   <button
                     class="btn btn-secondary"
                     onClick={() => revealInFinder(d().file_path)}
                   >
-                    Reveal in Finder
+                    Mostrar en Finder
+                  </button>
+                  <button
+                    class="btn btn-secondary"
+                    onClick={() => handleBackup(d().file_path)}
+                    title="Copiar a iCloud Drive/WanShiTong"
+                  >
+                    ☁ iCloud
                   </button>
                   <button
                     class="btn btn-secondary"
                     onClick={openEditPanel}
                   >
-                    Edit
+                    Editar
                   </button>
                 </div>
+                <Show when={backupStatus()}>
+                  <p class={`detail-backup-status${backupError() ? " detail-backup-status--error" : ""}`}>
+                    {backupStatus()}
+                  </p>
+                </Show>
               </div>
             </div>
 
