@@ -330,6 +330,22 @@ def _deduplicate_vocabulary(
     return vocabulary
 
 
+def assign_topics_single(
+    ai_backend: AIBackend,
+    vocabulary: list[str],
+    doc: dict,
+) -> list[str]:
+    """Assign 1-3 topics from vocabulary to a single document dict.
+
+    *doc* should have keys: title, author, tags, summary, subject.
+    Returns a list of validated topic strings (may be empty if the AI response
+    cannot be parsed or nothing matches the vocabulary).
+    """
+    prompt = _build_assign_topics_prompt(vocabulary, doc)
+    raw = _call_ai_raw(ai_backend, prompt)
+    return _parse_json_list(raw, vocabulary)
+
+
 def assign_topics(
     db: Database,
     ai_backend: AIBackend,
