@@ -72,6 +72,24 @@ Respondé con exactamente dos nombres, uno por línea, en español, 1-3 palabras
 No pongas explicaciones, numeración, ni puntuación — solo los dos nombres."""
 
 
+def _build_subject_naming_prompt(topic_names: list[str]) -> str:
+    """Build a prompt asking the AI to name a super-cluster of topics as a broad subject."""
+    topics_str = ", ".join(f'"{t}"' for t in topic_names)
+    return f"""You are helping build a subject classification for an academic/personal library.
+
+Below are related topics clustered by semantic similarity.
+Your task: give this group a SHORT, BROAD ACADEMIC SUBJECT name (1-3 words) covering all of them.
+Examples: "Matemáticas", "Ciencias de la Computación", "Literatura", "Física", "Economía".
+
+Rules:
+- 1 to 3 words maximum.
+- In Spanish.
+- Broad / high-level (a subject area, not a specific subtopic).
+- Return ONLY the subject name, nothing else — no explanation, no punctuation, no quotes.
+
+Topics in this group: [{topics_str}]"""
+
+
 def _build_assign_topics_prompt(vocabulary: list[str], doc: dict) -> str:
     """Build a prompt asking Claude to assign topics to a document."""
     vocab_str = ", ".join(f'"{t}"' for t in vocabulary)
@@ -97,20 +115,21 @@ def build_vocabulary(
     db: Database,
     ai_backend: AIBackend,
     n_topics: int | None = None,
-) -> tuple[list[str], dict[int, list[str]]]:
+) -> tuple[list[str], dict[int, list[str]], dict[str, str]]:
     """Generate a topic vocabulary from the document corpus.
 
     Steps:
       1. Extract all documents.
       2. Embed title + tags + summary with a multilingual sentence-transformer.
       3. Determine optimal cluster count (silhouette) or use n_topics.
-      4. KMeans clustering.
-      5. For each cluster, name it via AI.
+      4. KMeans clustering → topic names.
+      5. Second KMeans on topic centroids → broader subject groups, named via AI.
 
-    Returns a tuple (vocabulary, representative_docs) where:
+    Returns a tuple (vocabulary, representative_docs, topic_to_subject) where:
       - vocabulary is a list of topic name strings.
       - representative_docs is a dict mapping cluster index to a list of up to 3
         document titles that are closest to the cluster centroid.
+      - topic_to_subject maps each topic name to its broad subject name.
     """
     try:
         import numpy as np
@@ -141,7 +160,7 @@ def build_vocabulary(
 
     entries = db.list_all()
     if not entries:
-        return [], {}
+        return [], {}, {}
 
     # Build text representations
     texts: list[str] = []
@@ -171,8 +190,9 @@ def build_vocabulary(
     if n_docs < 2:
         # Can't cluster a single document — just name it directly
         topic = _name_cluster(ai_backend, doc_metas[:1])
+        subject = _call_ai_raw(ai_backend, _build_subject_naming_prompt([topic])).strip().strip('"')
         representative_docs = {0: [doc_metas[0]["title"]]}
-        return [topic], representative_docs
+        return [topic], representative_docs, {topic: subject}
 
     # Determine number of clusters
     if n_topics is not None:
@@ -216,7 +236,63 @@ def build_vocabulary(
     # Resolve duplicate names (e.g. two clusters both named "Álgebra Lineal")
     _deduplicate_vocabulary(ai_backend, vocabulary, cluster_docs_map)
 
-    return vocabulary, representative_docs
+    # Second KMeans on topic centroids → broader subject groups
+    topic_to_subject = _build_subject_mapping(ai_backend, vocabulary, centroids, k)
+
+    return vocabulary, representative_docs, topic_to_subject
+
+
+def _build_subject_mapping(
+    ai_backend: AIBackend,
+    vocabulary: list[str],
+    centroids,
+    k: int,
+) -> dict[str, str]:
+    """Run a second KMeans on topic centroids to derive broader subject names.
+
+    Each subject cluster groups several related topics; the AI names the group
+    with a broad academic area (e.g. "Matemáticas", "Literatura").
+    """
+    from sklearn.cluster import KMeans  # type: ignore[import-not-found]
+
+    if k < 4:
+        # Too few topics — name each individually as a subject
+        subject_map: dict[str, str] = {}
+        for topic in vocabulary:
+            raw = _call_ai_raw(ai_backend, _build_subject_naming_prompt([topic]))
+            subject_map[topic] = raw.strip().strip('"').strip("'").strip()
+        return subject_map
+
+    n_subjects = min(max(2, k // 3), k - 1, 8)
+    km2 = KMeans(n_clusters=n_subjects, random_state=42, n_init="auto")
+    super_labels = km2.fit_predict(centroids)
+
+    subject_map = {}
+    for s_idx in range(n_subjects):
+        topic_indices = [i for i, lbl in enumerate(super_labels) if lbl == s_idx]
+        topic_names = [vocabulary[i] for i in topic_indices]
+        raw = _call_ai_raw(ai_backend, _build_subject_naming_prompt(topic_names))
+        subject_name = raw.strip().strip('"').strip("'").strip()
+        for t in topic_names:
+            subject_map[t] = subject_name
+    return subject_map
+
+
+def backfill_subjects(db: Database, topic_to_subject: dict[str, str]) -> int:
+    """Set subject on every document based on its primary topic.
+
+    Returns the number of documents updated.
+    """
+    updated = 0
+    for entry in db.list_all():
+        if not entry.metadata.topics:
+            continue
+        subject = topic_to_subject.get(entry.metadata.topics[0])
+        if subject and subject != entry.metadata.subject:
+            entry.metadata.subject = subject
+            db.update(entry)
+            updated += 1
+    return updated
 
 
 def _optimal_k(embeddings, min_k: int = 2, max_k: int = 20) -> int:
@@ -412,9 +488,13 @@ def _parse_json_list(raw: str, vocabulary: list[str]) -> list[str]:
     return []
 
 
-def save_vocabulary(db: Database, vocabulary: list[str]) -> None:
-    """Persist the vocabulary in the DB."""
-    db.save_topics_vocabulary(vocabulary)
+def save_vocabulary(
+    db: Database,
+    vocabulary: list[str],
+    topic_to_subject: dict[str, str] | None = None,
+) -> None:
+    """Persist the vocabulary and optional subject mapping in the DB."""
+    db.save_topics_vocabulary(vocabulary, subjects=topic_to_subject)
 
 
 def load_vocabulary(db: Database) -> list[str] | None:

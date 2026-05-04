@@ -56,6 +56,7 @@ TOPICS_VOCABULARY_SCHEMA = """
 CREATE TABLE IF NOT EXISTS topics_vocabulary (
     id      INTEGER PRIMARY KEY CHECK (id = 1),
     topics  TEXT NOT NULL,
+    subjects TEXT,
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 """
@@ -101,6 +102,9 @@ class Database:
             self.conn.executescript(FTS_SCHEMA)
 
         self.conn.executescript(TOPICS_VOCABULARY_SCHEMA)
+        if not _has_column(self.conn, "topics_vocabulary", "subjects"):
+            self.conn.execute("ALTER TABLE topics_vocabulary ADD COLUMN subjects TEXT")
+            self.conn.commit()
 
     def _rebuild_fts(self) -> None:
         """Drop and recreate FTS table with the current schema, then repopulate."""
@@ -317,11 +321,15 @@ class Database:
         ).fetchone()
         return self._row_to_entry(row) if row else None
 
-    def save_topics_vocabulary(self, vocabulary: list[str]) -> None:
+    def save_topics_vocabulary(
+        self,
+        vocabulary: list[str],
+        subjects: dict[str, str] | None = None,
+    ) -> None:
         self.conn.execute(
-            "INSERT OR REPLACE INTO topics_vocabulary(id, topics, updated_at)"
-            " VALUES (1, ?, datetime('now'))",
-            (json.dumps(vocabulary),),
+            "INSERT OR REPLACE INTO topics_vocabulary(id, topics, subjects, updated_at)"
+            " VALUES (1, ?, ?, datetime('now'))",
+            (json.dumps(vocabulary), json.dumps(subjects) if subjects else None),
         )
         self.conn.commit()
 
@@ -330,6 +338,18 @@ class Database:
         if row is None:
             return None
         return json.loads(row["topics"])
+
+    def load_topics_subjects(self) -> dict[str, str]:
+        row = self.conn.execute("SELECT subjects FROM topics_vocabulary WHERE id = 1").fetchone()
+        if row is None or row["subjects"] is None:
+            return {}
+        return json.loads(row["subjects"])
+
+    def update_subject(self, doc_id: int, subject: str | None) -> None:
+        entry = self.get(doc_id)
+        if entry is not None:
+            entry.metadata.subject = subject
+            self.update(entry)
 
     def _row_to_entry(self, row: sqlite3.Row) -> LibraryEntry:
         tags = json.loads(row["tags"]) if row["tags"] else []

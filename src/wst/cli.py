@@ -1664,9 +1664,10 @@ def topics(ctx: click.Context) -> None:
 
     \b
     Commands:
-      build   Generate vocabulary from corpus and assign to all documents.
-      list    Show the current topic vocabulary.
-      assign  (Re)assign topics to one or all documents.
+      build     Generate vocabulary from corpus and assign to all documents.
+      list      Show the current topic vocabulary.
+      assign    (Re)assign topics to one or all documents.
+      subjects  Show the topic → subject mapping.
     """
 
 
@@ -1703,7 +1704,7 @@ def topics_build(ctx: click.Context, n_topics: int | None, yes: bool) -> None:
     db = Database(config.db_path)
 
     try:
-        from wst.topics import assign_topics, build_vocabulary, save_vocabulary
+        from wst.topics import assign_topics, backfill_subjects, build_vocabulary, save_vocabulary
 
         # Check for existing vocabulary
         existing = db.load_topics_vocabulary()
@@ -1726,8 +1727,10 @@ def topics_build(ctx: click.Context, n_topics: int | None, yes: bool) -> None:
         ai = get_ai_backend(config.ai_backend, config.ai_model)
 
         if fmt == "human":
-            click.echo("Step 1/3  Embedding documents and clustering...")
-        vocabulary, representative_docs = build_vocabulary(db, ai, n_topics=n_topics)
+            click.echo("Step 1/4  Embedding documents and clustering...")
+        vocabulary, representative_docs, topic_to_subject = build_vocabulary(
+            db, ai, n_topics=n_topics
+        )
 
         if not vocabulary:
             if fmt == "human":
@@ -1749,16 +1752,16 @@ def topics_build(ctx: click.Context, n_topics: int | None, yes: bool) -> None:
                 return
 
         if fmt == "human":
-            click.echo("Step 2/3  Assigning topics to documents...")
+            click.echo("Step 2/4  Assigning topics to documents...")
 
         assignments = assign_topics(db, ai, vocabulary)
 
         if fmt == "human":
-            click.echo("Step 3/3  Saving to database...")
+            click.echo("Step 3/4  Saving to database...")
 
-        save_vocabulary(db, vocabulary)
+        save_vocabulary(db, vocabulary, topic_to_subject)
 
-        # Persist assignments
+        # Persist topic assignments
         entries = db.list_all()
         entry_map = {e.id: e for e in entries}
         for doc_id, assigned in assignments.items():
@@ -1768,8 +1771,14 @@ def topics_build(ctx: click.Context, n_topics: int | None, yes: bool) -> None:
             entry.metadata.topics = assigned
             db.update(entry)
 
+        # Backfill subjects from topic→subject mapping
+        if fmt == "human":
+            click.echo("Step 4/4  Backfilling subjects from topic clusters...")
+        subject_updated = backfill_subjects(db, topic_to_subject)
+
         if fmt == "human":
             click.echo(f"\nDone. {len(assignments)} document(s) assigned topics.")
+            click.echo(f"      {subject_updated} document(s) had their subject updated.")
             click.echo(f"Vocabulary ({len(vocabulary)}): {', '.join(vocabulary)}")
             return
 
@@ -1778,7 +1787,9 @@ def topics_build(ctx: click.Context, n_topics: int | None, yes: bool) -> None:
         render_ok(
             {
                 "vocabulary": vocabulary,
+                "subjects": topic_to_subject,
                 "assigned_count": len(assignments),
+                "subjects_updated": subject_updated,
                 "assignments": {str(k): v for k, v in assignments.items()},
             },
             fmt=fmt,
@@ -1848,7 +1859,7 @@ def topics_assign(ctx: click.Context, doc_id: int | None, yes: bool) -> None:
     db = Database(config.db_path)
 
     try:
-        from wst.topics import assign_topics
+        from wst.topics import assign_topics, backfill_subjects
 
         vocabulary = db.load_topics_vocabulary()
         if not vocabulary:
@@ -1897,8 +1908,14 @@ def topics_assign(ctx: click.Context, doc_id: int | None, yes: bool) -> None:
             db.update(entry)
             updated += 1
 
+        # Backfill subjects from stored topic→subject mapping
+        topic_to_subject = db.load_topics_subjects()
+        subject_updated = backfill_subjects(db, topic_to_subject) if topic_to_subject else 0
+
         if fmt == "human":
             click.echo(f"Assigned topics to {updated} document(s).")
+            if subject_updated:
+                click.echo(f"Updated subjects for {subject_updated} document(s).")
             return
 
         from wst.output import render_ok
@@ -1906,10 +1923,57 @@ def topics_assign(ctx: click.Context, doc_id: int | None, yes: bool) -> None:
         render_ok(
             {
                 "updated": updated,
+                "subjects_updated": subject_updated,
                 "assignments": {str(k): v for k, v in assignments.items()},
             },
             fmt=fmt,
         )
+    finally:
+        db.close()
+
+
+@topics.command("subjects")
+@command_format_option()
+@click.pass_context
+def topics_subjects(ctx: click.Context) -> None:
+    """Show the topic → subject mapping derived from clustering.
+
+    \b
+    Examples:
+        wst topics subjects
+        wst topics subjects --format json
+    """
+    config: WstConfig = ctx.obj["config"]
+    fmt: str = ctx.obj.get("format", "human")
+    db = Database(config.db_path)
+
+    try:
+        topic_to_subject = db.load_topics_subjects()
+        if not topic_to_subject:
+            if fmt == "human":
+                click.echo("No subject mapping found. Run `wst topics build` first.")
+                return
+            from wst.output import render_ok
+
+            render_ok({"subjects": {}}, fmt=fmt)
+            return
+
+        if fmt == "human":
+            # Group by subject for readability
+            from collections import defaultdict
+
+            by_subject: dict[str, list[str]] = defaultdict(list)
+            for topic, subject in topic_to_subject.items():
+                by_subject[subject].append(topic)
+            click.echo(f"Topic → Subject mapping ({len(topic_to_subject)} topics):")
+            for subject in sorted(by_subject):
+                topics_in = ", ".join(sorted(by_subject[subject]))
+                click.echo(f"  {subject}: {topics_in}")
+            return
+
+        from wst.output import render_ok
+
+        render_ok({"subjects": topic_to_subject}, fmt=fmt)
     finally:
         db.close()
 
@@ -1979,7 +2043,7 @@ def _fix_topics_cmd(
     doc_type: str | None,
 ) -> None:
     """Assign topics (from existing vocabulary) to documents that have none."""
-    from wst.topics import assign_topics
+    from wst.topics import assign_topics, backfill_subjects
 
     vocabulary = db.load_topics_vocabulary()
     if not vocabulary:
@@ -2044,6 +2108,9 @@ def _fix_topics_cmd(
         entry.metadata.topics = assigned_topics
         db.update(entry)
         updated += 1
+
+    topic_to_subject = db.load_topics_subjects()
+    backfill_subjects(db, topic_to_subject)
 
     if fmt == "human":
         click.echo(f"Assigned topics to {updated} document(s).")
