@@ -1838,8 +1838,11 @@ def topics_build(ctx: click.Context, n_topics: int | None, yes: bool) -> None:
 
         if fmt == "human":
             click.echo("Step 1/4  Embedding documents and clustering...")
+        # Pass existing vocab size as minimum so adding a few new documents
+        # doesn't collapse the vocabulary to a smaller number of topics.
+        min_topics = len(existing) if existing else None
         vocabulary, representative_docs, topic_to_subject = build_vocabulary(
-            db, ai, n_topics=n_topics
+            db, ai, n_topics=n_topics, min_topics=min_topics
         )
 
         if not vocabulary:
@@ -1853,6 +1856,19 @@ def topics_build(ctx: click.Context, n_topics: int | None, yes: bool) -> None:
 
         if fmt == "human":
             click.echo(f"          Generated {len(vocabulary)} topics: {', '.join(vocabulary)}")
+            if existing:
+                old_set = set(existing)
+                new_set = set(vocabulary)
+                added = sorted(new_set - old_set)
+                removed = sorted(old_set - new_set)
+                if added or removed:
+                    click.echo("          Changes vs previous vocabulary:")
+                    for t in added:
+                        click.echo(f"            + {t}")
+                    for t in removed:
+                        click.echo(f"            - {t}")
+                else:
+                    click.echo("          (No changes vs previous vocabulary)")
 
         # --- Interactive review/edit (human mode without -y) ---
         if fmt == "human" and not yes:

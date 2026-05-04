@@ -115,6 +115,7 @@ def build_vocabulary(
     db: Database,
     ai_backend: AIBackend,
     n_topics: int | None = None,
+    min_topics: int | None = None,
 ) -> tuple[list[str], dict[int, list[str]], dict[str, str]]:
     """Generate a topic vocabulary from the document corpus.
 
@@ -216,7 +217,14 @@ def build_vocabulary(
     if n_topics is not None:
         k = max(2, min(n_topics, n_docs))
     else:
-        k = _optimal_k(embeddings, min_k=min(2, n_docs), max_k=min(20, n_docs))
+        # Use existing vocabulary size as a floor so adding a few new documents
+        # doesn't collapse the vocabulary from e.g. 19 topics down to 5.
+        effective_min = max(2, min_topics or 2)
+        k = _optimal_k(
+            embeddings,
+            min_k=min(effective_min, n_docs),
+            max_k=min(max(20, effective_min), n_docs),
+        )
 
     # KMeans clustering
     km = KMeans(n_clusters=k, random_state=42, n_init="auto")
