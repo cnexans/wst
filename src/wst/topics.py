@@ -139,6 +139,21 @@ def build_vocabulary(
         import platform
         import sys
 
+        # Detect PyInstaller bundle — the bundled binary includes numpy/sklearn
+        # but not sentence-transformers (too large to bundle). Direct users to
+        # the pipx-based install which supports all extras.
+        running_in_bundle = getattr(sys, "frozen", False)
+        if running_in_bundle:
+            base_msg = (
+                f"Topic modeling requires sentence-transformers, which is not "
+                f"bundled in the desktop app due to size constraints: {e}.\n\n"
+                "Install wst via pipx for full topic support:\n\n"
+                "    pipx install wst-library\n"
+                "    pipx inject wst-library sentence-transformers scikit-learn\n\n"
+                "Then use the wst CLI from your terminal instead of the app's built-in one."
+            )
+            raise RuntimeError(base_msg) from e
+
         base_msg = (
             f"Topic modeling requires additional dependencies: {e}.\n\n"
             "If you installed wst with pipx (recommended):\n\n"

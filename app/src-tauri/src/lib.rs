@@ -41,6 +41,13 @@ fn install_cli_to_path() {
     let bin_dir = home.join(".local").join("bin");
     let dest = bin_dir.join("wst");
 
+    // Don't overwrite an existing wst binary — it may be a pipx/pip installation
+    // with optional extras (e.g. sentence-transformers for topics) that the
+    // bundled sidecar doesn't include.
+    if dest.exists() {
+        return;
+    }
+
     if let Err(e) = std::fs::create_dir_all(&bin_dir) {
         eprintln!("wst: could not create ~/.local/bin: {e}");
         return;

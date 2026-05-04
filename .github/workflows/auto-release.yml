@@ -108,8 +108,13 @@ jobs:
       - name: Build standalone wst CLI binary
         run: |
           python -m venv .venv
-          .venv/bin/pip install -e . pyinstaller
-          .venv/bin/pyinstaller --onefile --name wst --collect-all wst pyinstaller_entry.py
+          .venv/bin/pip install -e . numpy scikit-learn scipy pyinstaller
+          .venv/bin/pyinstaller --onefile --name wst \
+            --collect-all wst \
+            --collect-all numpy \
+            --collect-all sklearn \
+            --collect-all scipy \
+            pyinstaller_entry.py
           mkdir -p app/src-tauri/binaries
           TRIPLE=$(rustc -vV | grep '^host:' | cut -d' ' -f2)
           cp dist/wst "app/src-tauri/binaries/wst-$TRIPLE"
