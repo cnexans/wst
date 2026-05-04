@@ -285,6 +285,7 @@ def ingest(
             verbose=verbose,
             emit=(fmt == "human"),
             progress=(fmt == "human"),
+            library_path=config.library_path,
         )
 
         if path is None and not keep_inbox:
@@ -1576,8 +1577,14 @@ def fix(
     type=click.Choice([dt.value for dt in DocType], case_sensitive=False),
     help="Only process documents of this type",
 )
+@click.option(
+    "--missing",
+    is_flag=True,
+    default=False,
+    help="List documents missing covers without generating them",
+)
 @click.pass_context
-def covers(ctx: click.Context, doc_type: str | None) -> None:
+def covers(ctx: click.Context, doc_type: str | None, missing: bool) -> None:
     """Download and cache cover images for all documents.
 
     \b
@@ -1591,7 +1598,8 @@ def covers(ctx: click.Context, doc_type: str | None) -> None:
 
     \b
     Examples:
-        wst covers                  # all documents
+        wst covers                  # generate missing covers
+        wst covers --missing        # list docs without covers
         wst covers --type textbook  # only textbooks
     """
     from wst.covers import ensure_cover, get_cached_cover
@@ -1603,11 +1611,24 @@ def covers(ctx: click.Context, doc_type: str | None) -> None:
         entries = db.list_all(doc_type=doc_type)
         total = len(entries)
 
-        already = sum(1 for e in entries if get_cached_cover(config.library_path, e.id) is not None)
-        to_fetch = total - already
-        click.echo(f"Total: {total}, cached: {already}, to fetch: {to_fetch}")
+        missing_entries = [
+            e for e in entries if get_cached_cover(config.library_path, e.id) is None
+        ]
 
-        if to_fetch == 0:
+        if missing:
+            if not missing_entries:
+                click.echo("All documents have covers.")
+                return
+            click.echo(f"{len(missing_entries)} document(s) missing covers:")
+            for e in missing_entries:
+                source = "PDF" if not e.metadata.isbn else "ISBN"
+                click.echo(f"  [{e.id}] {e.metadata.title[:60]} ({source})")
+            return
+
+        already = total - len(missing_entries)
+        click.echo(f"Total: {total}, cached: {already}, to fetch: {len(missing_entries)}")
+
+        if not missing_entries:
             click.echo("All covers are cached.")
             return
 
@@ -1615,14 +1636,11 @@ def covers(ctx: click.Context, doc_type: str | None) -> None:
         failed = 0
         start = time.monotonic()
 
-        for i, entry in enumerate(entries, 1):
-            if get_cached_cover(config.library_path, entry.id) is not None:
-                continue
-
+        for i, entry in enumerate(missing_entries, 1):
             m = entry.metadata
             name = m.title[:40] + ".." if len(m.title) > 42 else m.title
             source = "ISBN" if m.isbn else "PDF"
-            click.echo(f"  [{i}/{total}] {name} ({source})...", nl=False)
+            click.echo(f"  [{i}/{len(missing_entries)}] {name} ({source})...", nl=False)
 
             result = ensure_cover(config.library_path, entry.id, m.isbn, entry.file_path)
 

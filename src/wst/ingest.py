@@ -88,6 +88,7 @@ def ingest_file(
     auto_confirm: bool = False,
     reprocess: bool = False,
     verbose: bool = False,
+    library_path: Path | None = None,
 ) -> IngestResult:
     """Ingest a single document file. Returns an IngestResult."""
     if verbose:
@@ -177,6 +178,13 @@ def ingest_file(
     entry.id = db.insert(entry)
     if verbose:
         click.echo(f"  Ingested -> {final_path}")
+
+    # Generate cover immediately so the app shows it without requiring `wst covers`
+    if library_path is not None:
+        from wst.covers import ensure_cover
+
+        ensure_cover(library_path, entry.id, metadata.isbn, entry.file_path)
+
     return IngestResult(path.name, "ingested", dest_path=final_path)
 
 
@@ -196,6 +204,7 @@ def ingest_files(
     *,
     emit: bool = True,
     progress: bool = True,
+    library_path: Path | None = None,
 ) -> dict:
     """Ingest a list of document files.
 
@@ -236,7 +245,9 @@ def ingest_files(
             # Need to clear progress line before interactive prompt
             _clear_line()
 
-        result = ingest_file(doc_path, ai, storage, db, auto_confirm, reprocess, verbose)
+        result = ingest_file(
+            doc_path, ai, storage, db, auto_confirm, reprocess, verbose, library_path
+        )
         results.append(result)
 
     # Clear progress line
