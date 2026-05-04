@@ -1664,8 +1664,15 @@ def fix(
     default=False,
     help="List documents missing covers without generating them",
 )
+@click.option(
+    "--force",
+    "-f",
+    is_flag=True,
+    default=False,
+    help="Regenerate all covers, even those already cached",
+)
 @click.pass_context
-def covers(ctx: click.Context, doc_type: str | None, missing: bool) -> None:
+def covers(ctx: click.Context, doc_type: str | None, missing: bool, force: bool) -> None:
     """Download and cache cover images for all documents.
 
     \b
@@ -1680,6 +1687,7 @@ def covers(ctx: click.Context, doc_type: str | None, missing: bool) -> None:
     \b
     Examples:
         wst covers                  # generate missing covers
+        wst covers --force          # regenerate all covers
         wst covers --missing        # list docs without covers
         wst covers --type textbook  # only textbooks
     """
@@ -1692,9 +1700,12 @@ def covers(ctx: click.Context, doc_type: str | None, missing: bool) -> None:
         entries = db.list_all(doc_type=doc_type)
         total = len(entries)
 
-        missing_entries = [
-            e for e in entries if get_cached_cover(config.library_path, e.id) is None
-        ]
+        if force:
+            missing_entries = entries
+        else:
+            missing_entries = [
+                e for e in entries if get_cached_cover(config.library_path, e.id) is None
+            ]
 
         if missing:
             if not missing_entries:
