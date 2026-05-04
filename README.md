@@ -42,6 +42,18 @@ pipx install wst-library
 pip install wst-library
 ```
 
+### Desktop App (macOS)
+
+Download `Wan.Shi.Tong_*.dmg` from the [latest release](https://github.com/cnexans/wst/releases/latest), open it, and drag the app to `/Applications`.
+
+Since the app is not yet notarized by Apple, macOS may show a "damaged" warning on first launch. Run this once in Terminal to clear the quarantine flag:
+
+```bash
+xattr -cr /Applications/Wan\ Shi\ Tong.app
+```
+
+Then open the app normally.
+
 ### Homebrew (macOS/Linux)
 
 ```bash
