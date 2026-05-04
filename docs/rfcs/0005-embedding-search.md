@@ -1,151 +1,73 @@
-# RFC 0005: Semantic Embedding Search
+# RFC 0005: Semantic Embedding Search (multilingual)
 
 **Issue**: #9  
-**Status**: Draft — awaiting approval  
+**Status**: Approved — implementation in progress  
 **Branch**: `rfc/issue-9-embedding-search`
 
 ---
 
 ## Problem
 
-Current search (`db.search()`) uses SQLite FTS5 with full-text matching. FTS5 has language-specific limitations:
+Current search uses SQLite FTS5, which has language-specific limitations:
 
-- **Tokenization is Latin-script biased** — Spanish accented characters (é, ñ, ü), Greek math symbols, and Cyrillic degrade match quality.
-- **No synonym matching** — searching "cálculo" won't match a document whose title is "Calculus".
-- **No semantic proximity** — "differential geometry" doesn't match "geometría diferencial" even though they're the same topic.
-- **No fuzzy matching** — a typo ("calculs") returns zero results.
-
-The issue notes "many bugs for different languages" as the core symptom.
+- Tokenization is Latin-script biased — accented characters (é, ñ) degrade match quality.
+- No synonym matching — "cálculo" won't match a document titled "Calculus".
+- No semantic proximity — "differential geometry" doesn't match "geometría diferencial".
+- Typos return zero results.
 
 ---
 
-## Proposed Solution
+## Approved Solution
 
-Add **semantic embedding search** alongside the existing FTS5 search:
+Add semantic embedding search as the **default mode** when an index exists:
 
-1. At `wst topics build` time (when embeddings are already computed), **persist document embeddings** to a vector index on disk.
-2. At search time, embed the query with the same model and **retrieve top-K documents by cosine similarity**.
-3. Blend or replace the FTS5 results with embedding results depending on a `--mode` flag.
+1. `wst topics build` computes all document embeddings (already done) and persists them to a new `embeddings` SQLite table as BLOB columns.
+2. `wst search` detects if the index exists and uses cosine-similarity search by default; falls back to FTS if not.
+3. New documents added via `wst ingest` are automatically embedded and added to the index (if it already exists).
+4. `wst search --mode fts` forces FTS for users who need keyword-exact behavior.
 
-### Architecture
+### Approved answers
 
-#### Step 1 — Persist embeddings
+- **Q1**: Semantic is default when the index exists; `--mode fts` overrides.
+- **Q2**: App auto-uses semantic — since `wst search` auto-detects, `run_wst_command` requires no changes.
+- **Q3**: SQLite BLOBs — embeddings stored in `embeddings` table, single file, portable.
+- **Q4**: Incremental — after `wst ingest`, the new doc is added to the existing index automatically.
 
-During `build_vocabulary` (which already embeds all documents), save the embeddings to a binary file alongside the DB:
+### Storage: `embeddings` table
 
-```
-~/.wst/library/
-  wst.db
-  embeddings.npy        ← (n_docs, 384) float32 array
-  embeddings_ids.json   ← [doc_id, doc_id, ...] ordered parallel to rows
-```
-
-Or store in a dedicated SQLite table as BLOB for portability.
-
-**Implementation** (in `topics.py` or a new `search_index.py`):
-
-```python
-def save_embeddings(library_path: Path, doc_ids: list[int], embeddings: np.ndarray) -> None:
-    np.save(library_path / "embeddings.npy", embeddings.astype(np.float32))
-    (library_path / "embeddings_ids.json").write_text(json.dumps(doc_ids))
-
-def load_embeddings(library_path: Path) -> tuple[list[int], np.ndarray] | None:
-    emb_path = library_path / "embeddings.npy"
-    ids_path = library_path / "embeddings_ids.json"
-    if not emb_path.exists() or not ids_path.exists():
-        return None
-    ids = json.loads(ids_path.read_text())
-    emb = np.load(emb_path)
-    return ids, emb
+```sql
+CREATE TABLE IF NOT EXISTS embeddings (
+    doc_id INTEGER PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE,
+    embedding BLOB NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 ```
 
-#### Step 2 — Embed the query at search time
+Each embedding is a `float32` numpy array serialized via `.tobytes()` (~1.5 KB per doc for 384-dim). `ON DELETE CASCADE` keeps the index clean when documents are deleted.
 
-```python
-def semantic_search(
-    library_path: Path,
-    db: Database,
-    query: str,
-    top_k: int = 20,
-) -> list[LibraryEntry]:
-    from sentence_transformers import SentenceTransformer
-    import numpy as np
-
-    data = load_embeddings(library_path)
-    if data is None:
-        return []   # fall back to FTS
-
-    doc_ids, embeddings = data
-    model = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
-    q_emb = model.encode([query])[0]
-
-    # Cosine similarity
-    norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
-    sim = (embeddings / norms) @ (q_emb / np.linalg.norm(q_emb))
-    top_indices = np.argsort(sim)[::-1][:top_k]
-    ranked_ids = [doc_ids[i] for i in top_indices]
-
-    entries = db.get_by_ids(ranked_ids)
-    return sorted(entries, key=lambda e: ranked_ids.index(e.id))
-```
-
-#### Step 3 — Add `--mode` to `wst search`
+### Search flow
 
 ```
-wst search "cálculo" --mode fts       # existing behavior (default for now)
-wst search "cálculo" --mode semantic  # new embedding-based search
-wst search "cálculo" --mode hybrid    # union of both, deduplicated
+wst search "cálculo diferencial"
+  └─ mode == "auto" AND query non-empty AND db.count_embeddings() > 0?
+       yes → semantic search
+               → embed query with SentenceTransformer (multilingual)
+               → cosine similarity over all stored embeddings
+               → apply field filters (--type, --author, etc.) in memory
+               → return ranked LibraryEntry list
+       no  → db.search() FTS fallback (existing behavior)
 ```
 
-**Default**: keep `fts` as default until embeddings are validated. Users who've run `wst topics build` get `semantic` as the default.
+### Reuse existing model
 
-### Model reuse
-
-The same `paraphrase-multilingual-MiniLM-L12-v2` model already used for topics clustering is reused here — no new models or dependencies.
-
-### Dependency
-
-Requires `sentence-transformers` (already in the `[topics]` optional group). Semantic search is only available if the user has installed the topics extras:
-
-```
-pip install 'wst-library[topics]'
-```
-
-Graceful fallback to FTS if sentence-transformers is unavailable.
+`paraphrase-multilingual-MiniLM-L12-v2` (already in `[topics]` extras) is reused — no new dependencies.
 
 ---
 
-## Incremental update
+## Files Changed
 
-When a new document is ingested, its embedding needs to be appended to `embeddings.npy`. Add a `update_embedding(library_path, doc_id, text)` function called from `ingest_file`:
-
-```python
-def update_embedding(library_path: Path, doc_id: int, text: str) -> None:
-    from sentence_transformers import SentenceTransformer
-    emb = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2").encode([text])[0]
-    # Append to .npy or rebuild from scratch if small corpus
-    ...
-```
-
-For simplicity (and because ingesting is rare), **rebuild the full index** on each ingest if it already exists. For large libraries (>1000 docs), incremental append would be better — defer to a follow-up.
-
----
-
-## Open Questions
-
-> **Q1**: Should `semantic` become the default search mode once embeddings exist, or keep `fts` as default with `--semantic` flag?
-
-> **Q2**: How should we handle the app's search (which calls `wst search` via `run_wst_command`)? Should the app detect if embeddings exist and auto-use semantic mode?
-
-> **Q3**: Should we store embeddings in SQLite as BLOBs (single file, portable) or as `.npy` files (fast, simple, but extra files)? The corpus is small (<10k docs), so either is fine.
-
-> **Q4**: Should we auto-rebuild the embedding index after `wst ingest`, or keep it as an explicit `wst topics build` step?
-
----
-
-## Files Changed (implementation phase)
-
-- `src/wst/topics.py` — save embeddings at the end of `build_vocabulary`
-- `src/wst/db.py` — add `get_by_ids(ids: list[int])` method
-- `src/wst/cli.py` — add `--mode` option to `wst search`; add `semantic_search` function or module
-- `src/wst/search.py` (new) — `semantic_search`, `save_embeddings`, `load_embeddings`
+- `src/wst/search.py` (new) — `build_index`, `build_index_from_embeddings`, `upsert_entry`, `search`
+- `src/wst/db.py` — add `embeddings` table with FK cascade, enable FK enforcement, `upsert_embedding`, `load_all_embeddings`, `count_embeddings`, `get_by_ids`
+- `src/wst/topics.py` — save embeddings to DB at the end of `build_vocabulary`
+- `src/wst/ingest.py` — call `search.upsert_entry` after inserting a new document
+- `src/wst/cli.py` — add `--mode auto|fts|semantic` to `wst search`; route through semantic when index exists

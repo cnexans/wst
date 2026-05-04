@@ -60,6 +60,14 @@ CREATE TABLE IF NOT EXISTS topics_vocabulary (
 );
 """
 
+EMBEDDINGS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS embeddings (
+    doc_id     INTEGER PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE,
+    embedding  BLOB NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+"""
+
 
 def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
     rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
@@ -85,6 +93,7 @@ class Database:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(str(db_path))
         self.conn.row_factory = sqlite3.Row
+        self.conn.execute("PRAGMA foreign_keys = ON")
         self._init_schema()
 
     def _init_schema(self) -> None:
@@ -101,6 +110,7 @@ class Database:
             self.conn.executescript(FTS_SCHEMA)
 
         self.conn.executescript(TOPICS_VOCABULARY_SCHEMA)
+        self.conn.executescript(EMBEDDINGS_SCHEMA)
 
     def _rebuild_fts(self) -> None:
         """Drop and recreate FTS table with the current schema, then repopulate."""
@@ -330,6 +340,35 @@ class Database:
         if row is None:
             return None
         return json.loads(row["topics"])
+
+    # ------------------------------------------------------------------
+    # Embeddings (semantic search index)
+    # ------------------------------------------------------------------
+
+    def upsert_embedding(self, doc_id: int, embedding_bytes: bytes) -> None:
+        self.conn.execute(
+            "INSERT OR REPLACE INTO embeddings(doc_id, embedding, updated_at)"
+            " VALUES (?, ?, datetime('now'))",
+            (doc_id, embedding_bytes),
+        )
+        self.conn.commit()
+
+    def load_all_embeddings(self) -> dict[int, bytes]:
+        rows = self.conn.execute("SELECT doc_id, embedding FROM embeddings").fetchall()
+        return {row["doc_id"]: bytes(row["embedding"]) for row in rows}
+
+    def count_embeddings(self) -> int:
+        row = self.conn.execute("SELECT COUNT(*) AS n FROM embeddings").fetchone()
+        return row["n"] if row else 0
+
+    def get_by_ids(self, doc_ids: list[int]) -> list[LibraryEntry]:
+        if not doc_ids:
+            return []
+        placeholders = ",".join("?" * len(doc_ids))
+        rows = self.conn.execute(
+            f"SELECT * FROM documents WHERE id IN ({placeholders})", doc_ids
+        ).fetchall()
+        return [self._row_to_entry(r) for r in rows]
 
     def _row_to_entry(self, row: sqlite3.Row) -> LibraryEntry:
         tags = json.loads(row["tags"]) if row["tags"] else []

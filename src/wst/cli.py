@@ -735,6 +735,15 @@ def _copy_to_inbox(source: Path, inbox: Path) -> list[Path]:
 @click.option("--type", "-t", "doc_type", default=None, help="Filter by document type")
 @click.option("--subject", "-s", default=None, help="Filter by subject/knowledge area")
 @click.option("--topic", "-p", default=None, help="Filter by topic (partial, case-insensitive)")
+@click.option(
+    "--mode",
+    type=click.Choice(["auto", "fts", "semantic"], case_sensitive=False),
+    default="auto",
+    help=(
+        "Search mode: auto (semantic when index exists, else FTS), "
+        "fts (keyword), semantic (embedding-based)"
+    ),
+)
 @click.pass_context
 def search(
     ctx: click.Context,
@@ -743,14 +752,24 @@ def search(
     doc_type: str | None,
     subject: str | None,
     topic: str | None,
+    mode: str,
 ) -> None:
-    """Search documents by title, author, tags, subject, or topic."""
+    """Search documents by title, author, tags, subject, or topic.
+
+    \b
+    Semantic search (default when index exists):
+        wst search "machine learning"         # auto-uses semantic if index built
+        wst search "machine learning" --mode semantic
+        wst search "machine learning" --mode fts   # force keyword search
+    """
     config: WstConfig = ctx.obj["config"]
     fmt: str = ctx.obj.get("format", "human")
     db = Database(config.db_path)
 
     try:
-        results = db.search(query, doc_type=doc_type, author=author, subject=subject, topic=topic)
+        results = _run_search(
+            db, query, mode=mode, doc_type=doc_type, author=author, subject=subject, topic=topic
+        )
         if not results:
             if fmt == "human":
                 click.echo("No results found.")
@@ -767,6 +786,47 @@ def search(
         render_ok(results, fmt=fmt)
     finally:
         db.close()
+
+
+def _run_search(
+    db: Database,
+    query: str,
+    *,
+    mode: str = "auto",
+    doc_type: str | None = None,
+    author: str | None = None,
+    subject: str | None = None,
+    topic: str | None = None,
+) -> list:
+    """Route search through semantic or FTS depending on mode and index availability."""
+    use_semantic = False
+    if query and mode in ("auto", "semantic"):
+        from wst.search import search as _semantic_search
+
+        sem_results = _semantic_search(db, query, top_k=50)
+        if sem_results is not None:
+            use_semantic = True
+            results = sem_results
+            # Apply field filters in-memory (semantic bypasses SQL WHERE)
+            if doc_type:
+                results = [r for r in results if r.metadata.doc_type.value == doc_type.lower()]
+            if author:
+                results = [
+                    r for r in results if author.lower() in (r.metadata.author or "").lower()
+                ]
+            if subject:
+                results = [
+                    r for r in results if subject.lower() in (r.metadata.subject or "").lower()
+                ]
+            if topic:
+                results = [
+                    r for r in results if any(topic.lower() in t.lower() for t in r.metadata.topics)
+                ]
+            return results
+
+    if not use_semantic:
+        return db.search(query, doc_type=doc_type, author=author, subject=subject, topic=topic)
+    return []
 
 
 @cli.command(name="list")
