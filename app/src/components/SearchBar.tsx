@@ -25,7 +25,7 @@ export default function SearchBar() {
       <input
         ref={inputRef}
         type="text"
-        placeholder="Search by title, author, tags...  (Cmd+K)"
+        placeholder="Search...  author:Knuth  type:book  year:>2010  (Cmd+K)"
         value={searchQuery()}
         onInput={(e) => setSearchQuery(e.currentTarget.value)}
         class="search-input"
