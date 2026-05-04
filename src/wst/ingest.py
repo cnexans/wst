@@ -176,6 +176,12 @@ def ingest_file(
 
     # Index in DB
     entry.id = db.insert(entry)
+
+    # Update semantic search index if it already exists
+    from wst.search import upsert_entry as _upsert_embedding
+
+    _upsert_embedding(db, entry)
+
     if verbose:
         click.echo(f"  Ingested -> {final_path}")
 

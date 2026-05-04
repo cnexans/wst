@@ -191,6 +191,9 @@ def build_vocabulary(
         # Can't cluster a single document — just name it directly
         topic = _name_cluster(ai_backend, doc_metas[:1])
         subject = _call_ai_raw(ai_backend, _build_subject_naming_prompt([topic])).strip().strip('"')
+        from wst.search import build_index_from_embeddings
+
+        build_index_from_embeddings(db, doc_metas, embeddings)
         representative_docs = {0: [doc_metas[0]["title"]]}
         return [topic], representative_docs, {topic: subject}
 
@@ -235,6 +238,11 @@ def build_vocabulary(
 
     # Resolve duplicate names (e.g. two clusters both named "Álgebra Lineal")
     _deduplicate_vocabulary(ai_backend, vocabulary, cluster_docs_map)
+
+    # Persist embeddings for semantic search (reuse already-computed array)
+    from wst.search import build_index_from_embeddings
+
+    build_index_from_embeddings(db, doc_metas, embeddings)
 
     # Second KMeans on topic centroids → broader subject groups
     topic_to_subject = _build_subject_mapping(ai_backend, vocabulary, centroids, k)
