@@ -1,4 +1,5 @@
 import json
+import re
 import sqlite3
 from pathlib import Path
 
@@ -79,12 +80,19 @@ def _has_fts_column(conn: sqlite3.Connection, column: str) -> bool:
         return False
 
 
+def _regexp(pattern: str, value: str | None) -> bool:
+    if value is None:
+        return False
+    return bool(re.search(pattern, value, re.IGNORECASE))
+
+
 class Database:
     def __init__(self, db_path: Path):
         self.db_path = db_path
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(str(db_path))
         self.conn.row_factory = sqlite3.Row
+        self.conn.create_function("REGEXP", 2, _regexp)
         self._init_schema()
 
     def _init_schema(self) -> None:
@@ -195,20 +203,23 @@ class Database:
 
     def search(
         self,
-        query: str,
+        query: str = "",
         doc_type: str | None = None,
         author: str | None = None,
         subject: str | None = None,
         topic: str | None = None,
     ) -> list[LibraryEntry]:
-        if query:
-            sql = """SELECT d.* FROM documents d
-                     JOIN documents_fts f ON d.id = f.rowid
-                     WHERE documents_fts MATCH ?"""
-            params: list = [query]
+        from wst.query_parser import ParsedQuery, parse_query, to_sql
+
+        pq: ParsedQuery = parse_query(query) if query else ParsedQuery()
+        where, params, needs_fts = to_sql(pq)
+
+        if needs_fts:
+            sql = (
+                f"SELECT d.* FROM documents d JOIN documents_fts f ON d.id = f.rowid WHERE {where}"
+            )
         else:
-            sql = "SELECT * FROM documents d WHERE 1=1"
-            params = []
+            sql = f"SELECT d.* FROM documents d WHERE {where}"
 
         if doc_type:
             sql += " AND d.doc_type = ?"

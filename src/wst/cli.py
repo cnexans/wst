@@ -745,12 +745,40 @@ def search(
     subject: str | None,
     topic: str | None,
 ) -> None:
-    """Search documents by title, author, tags, subject, or topic."""
+    """Search documents using structured query syntax.
+
+    \b
+    Syntax:
+      word                  full-text search
+      "quoted phrase"       phrase search
+      field:value           substring/exact match
+      field:>value          range (year:>2000, year:<1990)
+      field:~pattern        regex match (case-insensitive)
+      AND / OR / NOT        boolean operators
+
+    \b
+    Fields: title, author, type, year, subject, topic, tag, language, isbn
+
+    \b
+    Examples:
+      wst search 'author:Knuth type:book'
+      wst search 'topic:cálculo year:>2010'
+      wst search '"linear algebra" NOT author:Strang'
+      wst search 'type:book OR type:paper'
+      wst search 'author:~Knu.*'
+    """
+    from wst.query_parser import parse_query
+
     config: WstConfig = ctx.obj["config"]
     fmt: str = ctx.obj.get("format", "human")
     db = Database(config.db_path)
 
     try:
+        if query and fmt == "human":
+            pq = parse_query(query)
+            for w in pq.warnings:
+                click.echo(f"Warning: {w}", err=True)
+
         results = db.search(query, doc_type=doc_type, author=author, subject=subject, topic=topic)
         if not results:
             if fmt == "human":
