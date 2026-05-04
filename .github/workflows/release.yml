@@ -29,12 +29,60 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install build twine
+      - run: pip install build
       - run: python -m build
-      - run: twine upload dist/*
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-dist
+          path: dist/
+
+  dmg:
+    needs: test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.version && format('v{0}', inputs.version) || github.ref }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build standalone wst CLI binary
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install -e . pyinstaller
+          .venv/bin/pyinstaller --onefile --name wst --collect-all wst pyinstaller_entry.py
+          mkdir -p app/src-tauri/binaries
+          TRIPLE=$(rustc -vV | grep '^host:' | cut -d' ' -f2)
+          cp dist/wst "app/src-tauri/binaries/wst-$TRIPLE"
+          chmod +x "app/src-tauri/binaries/wst-$TRIPLE"
+
+      - name: Build Tauri app
+        run: cd app && npm ci && npx tauri build
         env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ""
+
+      - name: Locate .dmg
+        id: dmg
+        run: |
+          DMG=$(ls app/src-tauri/target/release/bundle/dmg/*.dmg | head -1)
+          echo "path=$DMG" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: ${{ steps.dmg.outputs.path }}
 
   chocolatey:
     needs: test

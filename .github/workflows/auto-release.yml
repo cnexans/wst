@@ -1,0 +1,172 @@
+name: Auto Release
+
+# Fires on every push to main (i.e. when a PR is merged).
+# Checks whether the version in pyproject.toml already has a GitHub release;
+# if not, runs tests, builds the macOS .dmg, publishes to PyPI, and creates
+# a GitHub release with the .dmg + Python wheel attached as artifacts.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  # -----------------------------------------------------------------------
+  # Determine if this push introduces a new version that hasn't been released
+  # -----------------------------------------------------------------------
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      should_release: ${{ steps.meta.outputs.should_release }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version and check if release exists
+        id: meta
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(grep '^version' pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if gh release view "v$VERSION" > /dev/null 2>&1; then
+            echo "Release v$VERSION already exists — skipping."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "New version v$VERSION — will release."
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  # -----------------------------------------------------------------------
+  # Test + lint gate (runs only when a new release is needed)
+  # -----------------------------------------------------------------------
+  test:
+    needs: check
+    if: needs.check.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: ruff check src/ tests/
+      - run: ruff format --check src/ tests/
+      - run: pytest -v
+
+  # -----------------------------------------------------------------------
+  # Build Python wheel + sdist, publish to PyPI
+  # -----------------------------------------------------------------------
+  pypi:
+    needs: [check, test]
+    if: needs.check.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build distribution
+        run: |
+          pip install build
+          python -m build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-dist
+          path: dist/
+
+  # -----------------------------------------------------------------------
+  # Build macOS .dmg (PyInstaller CLI sidecar + Tauri app)
+  # -----------------------------------------------------------------------
+  dmg:
+    needs: [check, test]
+    if: needs.check.outputs.should_release == 'true'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build standalone wst CLI binary
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install -e . pyinstaller
+          .venv/bin/pyinstaller --onefile --name wst --collect-all wst pyinstaller_entry.py
+          mkdir -p app/src-tauri/binaries
+          TRIPLE=$(rustc -vV | grep '^host:' | cut -d' ' -f2)
+          cp dist/wst "app/src-tauri/binaries/wst-$TRIPLE"
+          chmod +x "app/src-tauri/binaries/wst-$TRIPLE"
+
+      - name: Build Tauri app
+        run: cd app && npm ci && npx tauri build
+        env:
+          # Skip code-signing in CI; set APPLE_* secrets here for signed builds
+          TAURI_SIGNING_PRIVATE_KEY: ""
+
+      - name: Locate .dmg
+        id: dmg
+        run: |
+          DMG=$(ls app/src-tauri/target/release/bundle/dmg/*.dmg | head -1)
+          echo "path=$DMG" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: ${{ steps.dmg.outputs.path }}
+
+  # -----------------------------------------------------------------------
+  # Create GitHub release, tag, and attach artifacts
+  # -----------------------------------------------------------------------
+  release:
+    needs: [check, pypi, dmg]
+    if: needs.check.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Need write access to push the tag
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-dist
+          path: dist/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-dmg
+          path: dmg/
+
+      - name: Create tag and GitHub release
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "v$VERSION" -m "Release v$VERSION"
+          git push origin "v$VERSION"
+          gh release create "v$VERSION" \
+            --title "v$VERSION" \
+            --generate-notes \
+            dist/*.whl \
+            dist/*.tar.gz \
+            dmg/*.dmg

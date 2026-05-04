@@ -3,7 +3,7 @@ PLANTUML_OUT = docs/images
 PLANTUML_SRC = $(wildcard $(PLANTUML_DIR)/*.puml)
 PLANTUML_PNG = $(patsubst $(PLANTUML_DIR)/%.puml,$(PLANTUML_OUT)/%.png,$(PLANTUML_SRC))
 
-.PHONY: docs clean-docs install install-topics build-app install-app build-install test lint
+.PHONY: docs clean-docs install install-topics build-app install-app build-install build-cli-binary test lint
 
 docs: $(PLANTUML_PNG)
 	@echo "PlantUML diagrams compiled to $(PLANTUML_OUT)/"
@@ -15,7 +15,18 @@ $(PLANTUML_OUT)/%.png: $(PLANTUML_DIR)/%.puml
 install:
 	pipx install --editable . 2>/dev/null || pipx upgrade wst-library
 
-build-app:
+build-cli-binary:
+	@echo "Building standalone wst binary with PyInstaller..."
+	.venv/bin/pip install --quiet pyinstaller
+	.venv/bin/pyinstaller --onefile --name wst --collect-all wst pyinstaller_entry.py
+	@mkdir -p app/src-tauri/binaries
+	@TRIPLE=$$(rustc -vV 2>/dev/null | grep '^host:' | cut -d' ' -f2); \
+	cp dist/wst "app/src-tauri/binaries/wst-$$TRIPLE" && \
+	chmod +x "app/src-tauri/binaries/wst-$$TRIPLE" && \
+	echo "Copied to app/src-tauri/binaries/wst-$$TRIPLE"
+	@echo "Note: app/src-tauri/binaries/wst-* are dev placeholders for other triples."
+
+build-app: build-cli-binary
 	cd app && npm install && npx tauri build
 
 install-app:

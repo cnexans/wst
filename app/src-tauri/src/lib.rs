@@ -23,6 +23,45 @@ fn get_library_path() -> PathBuf {
     home.join("wst").join("library")
 }
 
+/// Copy the bundled wst sidecar to ~/.local/bin/wst so it is available
+/// from the terminal even when the user installed via the .app bundle.
+/// Silently skips if the sidecar is not present (dev mode / pipx-only install).
+fn install_cli_to_path() {
+    let sidecar = match std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("wst")))
+    {
+        Some(p) if p.exists() => p,
+        _ => return,
+    };
+
+    let Some(home) = dirs::home_dir() else {
+        return;
+    };
+    let bin_dir = home.join(".local").join("bin");
+    let dest = bin_dir.join("wst");
+
+    if let Err(e) = std::fs::create_dir_all(&bin_dir) {
+        eprintln!("wst: could not create ~/.local/bin: {e}");
+        return;
+    }
+
+    if let Err(e) = std::fs::copy(&sidecar, &dest) {
+        eprintln!("wst: could not install CLI to {}: {e}", dest.display());
+        return;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(e) =
+            std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755))
+        {
+            eprintln!("wst: could not set permissions on CLI: {e}");
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let library_path = get_library_path();
@@ -34,6 +73,10 @@ pub fn run() {
     let covers_dir = library_path.join(".covers");
 
     tauri::Builder::default()
+        .setup(|_app| {
+            install_cli_to_path();
+            Ok(())
+        })
         .manage(DbState(std::sync::Mutex::new(db)))
         .manage(CoverState(cover_manager))
         .manage(LibraryPath(library_path))
