@@ -1,4 +1,5 @@
 import json
+import re
 import sqlite3
 from pathlib import Path
 
@@ -56,6 +57,7 @@ TOPICS_VOCABULARY_SCHEMA = """
 CREATE TABLE IF NOT EXISTS topics_vocabulary (
     id      INTEGER PRIMARY KEY CHECK (id = 1),
     topics  TEXT NOT NULL,
+    subjects TEXT,
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 """
@@ -87,6 +89,12 @@ def _has_fts_column(conn: sqlite3.Connection, column: str) -> bool:
         return False
 
 
+def _regexp(pattern: str, value: str | None) -> bool:
+    if value is None:
+        return False
+    return bool(re.search(pattern, value, re.IGNORECASE))
+
+
 class Database:
     def __init__(self, db_path: Path):
         self.db_path = db_path
@@ -94,6 +102,7 @@ class Database:
         self.conn = sqlite3.connect(str(db_path))
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
+        self.conn.create_function("REGEXP", 2, _regexp)
         self._init_schema()
 
     def _init_schema(self) -> None:
@@ -110,6 +119,9 @@ class Database:
             self.conn.executescript(FTS_SCHEMA)
 
         self.conn.executescript(TOPICS_VOCABULARY_SCHEMA)
+        if not _has_column(self.conn, "topics_vocabulary", "subjects"):
+            self.conn.execute("ALTER TABLE topics_vocabulary ADD COLUMN subjects TEXT")
+            self.conn.commit()
         self.conn.executescript(EMBEDDINGS_SCHEMA)
 
     def _rebuild_fts(self) -> None:
@@ -205,20 +217,23 @@ class Database:
 
     def search(
         self,
-        query: str,
+        query: str = "",
         doc_type: str | None = None,
         author: str | None = None,
         subject: str | None = None,
         topic: str | None = None,
     ) -> list[LibraryEntry]:
-        if query:
-            sql = """SELECT d.* FROM documents d
-                     JOIN documents_fts f ON d.id = f.rowid
-                     WHERE documents_fts MATCH ?"""
-            params: list = [query]
+        from wst.query_parser import ParsedQuery, parse_query, to_sql
+
+        pq: ParsedQuery = parse_query(query) if query else ParsedQuery()
+        where, params, needs_fts = to_sql(pq)
+
+        if needs_fts:
+            sql = (
+                f"SELECT d.* FROM documents d JOIN documents_fts f ON d.id = f.rowid WHERE {where}"
+            )
         else:
-            sql = "SELECT * FROM documents d WHERE 1=1"
-            params = []
+            sql = f"SELECT d.* FROM documents d WHERE {where}"
 
         if doc_type:
             sql += " AND d.doc_type = ?"
@@ -327,11 +342,15 @@ class Database:
         ).fetchone()
         return self._row_to_entry(row) if row else None
 
-    def save_topics_vocabulary(self, vocabulary: list[str]) -> None:
+    def save_topics_vocabulary(
+        self,
+        vocabulary: list[str],
+        subjects: dict[str, str] | None = None,
+    ) -> None:
         self.conn.execute(
-            "INSERT OR REPLACE INTO topics_vocabulary(id, topics, updated_at)"
-            " VALUES (1, ?, datetime('now'))",
-            (json.dumps(vocabulary),),
+            "INSERT OR REPLACE INTO topics_vocabulary(id, topics, subjects, updated_at)"
+            " VALUES (1, ?, ?, datetime('now'))",
+            (json.dumps(vocabulary), json.dumps(subjects) if subjects else None),
         )
         self.conn.commit()
 
@@ -340,6 +359,18 @@ class Database:
         if row is None:
             return None
         return json.loads(row["topics"])
+
+    def load_topics_subjects(self) -> dict[str, str]:
+        row = self.conn.execute("SELECT subjects FROM topics_vocabulary WHERE id = 1").fetchone()
+        if row is None or row["subjects"] is None:
+            return {}
+        return json.loads(row["subjects"])
+
+    def update_subject(self, doc_id: int, subject: str | None) -> None:
+        entry = self.get(doc_id)
+        if entry is not None:
+            entry.metadata.subject = subject
+            self.update(entry)
 
     # ------------------------------------------------------------------
     # Embeddings (semantic search index)

@@ -19,3 +19,10 @@ Thumbs.db
 
 # Project
 *.db
+
+# PyInstaller
+*.spec
+
+# Tauri sidecar binaries (real builds only — dev placeholder is committed)
+app/src-tauri/binaries/wst-*
+!app/src-tauri/binaries/wst-aarch64-apple-darwin

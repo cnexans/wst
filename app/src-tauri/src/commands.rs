@@ -104,7 +104,17 @@ pub async fn run_wst_command(args: Vec<String>) -> Result<String, String> {
     }
 }
 
-fn which_wst() -> String {
+pub fn which_wst() -> String {
+    // 1. Bundled sidecar: sibling to the app binary (inside .app/Contents/MacOS/)
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let sidecar = dir.join("wst");
+            if sidecar.exists() {
+                return sidecar.to_string_lossy().to_string();
+            }
+        }
+    }
+    // 2. User-installed CLI (pipx / manual)
     let candidates = [
         dirs::home_dir().map(|h| h.join(".local/bin/wst")),
         Some(std::path::PathBuf::from("/usr/local/bin/wst")),

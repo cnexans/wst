@@ -285,6 +285,7 @@ def ingest(
             verbose=verbose,
             emit=(fmt == "human"),
             progress=(fmt == "human"),
+            library_path=config.library_path,
         )
 
         if path is None and not keep_inbox:
@@ -754,19 +755,40 @@ def search(
     topic: str | None,
     mode: str,
 ) -> None:
-    """Search documents by title, author, tags, subject, or topic.
+    """Search documents using structured query syntax or semantic search.
 
     \b
-    Semantic search (default when index exists):
-        wst search "machine learning"         # auto-uses semantic if index built
-        wst search "machine learning" --mode semantic
-        wst search "machine learning" --mode fts   # force keyword search
+    Syntax:
+      word                  full-text / semantic search
+      "quoted phrase"       phrase search
+      field:value           substring/exact match
+      field:>value          range (year:>2000, year:<1990)
+      field:~pattern        regex match (case-insensitive)
+      AND / OR / NOT        boolean operators
+
+    \b
+    Fields: title, author, type, year, subject, topic, tag, language, isbn
+
+    \b
+    Examples:
+      wst search 'author:Knuth type:book'
+      wst search 'topic:cálculo year:>2010'
+      wst search '"linear algebra" NOT author:Strang'
+      wst search 'cálculo diferencial'       # semantic when index exists
+      wst search 'cálculo' --mode fts        # force keyword search
     """
+    from wst.query_parser import parse_query
+
     config: WstConfig = ctx.obj["config"]
     fmt: str = ctx.obj.get("format", "human")
     db = Database(config.db_path)
 
     try:
+        if query and fmt == "human":
+            pq = parse_query(query)
+            for w in pq.warnings:
+                click.echo(f"Warning: {w}", err=True)
+
         results = _run_search(
             db, query, mode=mode, doc_type=doc_type, author=author, subject=subject, topic=topic
         )
@@ -1636,8 +1658,14 @@ def fix(
     type=click.Choice([dt.value for dt in DocType], case_sensitive=False),
     help="Only process documents of this type",
 )
+@click.option(
+    "--missing",
+    is_flag=True,
+    default=False,
+    help="List documents missing covers without generating them",
+)
 @click.pass_context
-def covers(ctx: click.Context, doc_type: str | None) -> None:
+def covers(ctx: click.Context, doc_type: str | None, missing: bool) -> None:
     """Download and cache cover images for all documents.
 
     \b
@@ -1651,7 +1679,8 @@ def covers(ctx: click.Context, doc_type: str | None) -> None:
 
     \b
     Examples:
-        wst covers                  # all documents
+        wst covers                  # generate missing covers
+        wst covers --missing        # list docs without covers
         wst covers --type textbook  # only textbooks
     """
     from wst.covers import ensure_cover, get_cached_cover
@@ -1663,11 +1692,24 @@ def covers(ctx: click.Context, doc_type: str | None) -> None:
         entries = db.list_all(doc_type=doc_type)
         total = len(entries)
 
-        already = sum(1 for e in entries if get_cached_cover(config.library_path, e.id) is not None)
-        to_fetch = total - already
-        click.echo(f"Total: {total}, cached: {already}, to fetch: {to_fetch}")
+        missing_entries = [
+            e for e in entries if get_cached_cover(config.library_path, e.id) is None
+        ]
 
-        if to_fetch == 0:
+        if missing:
+            if not missing_entries:
+                click.echo("All documents have covers.")
+                return
+            click.echo(f"{len(missing_entries)} document(s) missing covers:")
+            for e in missing_entries:
+                source = "PDF" if not e.metadata.isbn else "ISBN"
+                click.echo(f"  [{e.id}] {e.metadata.title[:60]} ({source})")
+            return
+
+        already = total - len(missing_entries)
+        click.echo(f"Total: {total}, cached: {already}, to fetch: {len(missing_entries)}")
+
+        if not missing_entries:
             click.echo("All covers are cached.")
             return
 
@@ -1675,14 +1717,11 @@ def covers(ctx: click.Context, doc_type: str | None) -> None:
         failed = 0
         start = time.monotonic()
 
-        for i, entry in enumerate(entries, 1):
-            if get_cached_cover(config.library_path, entry.id) is not None:
-                continue
-
+        for i, entry in enumerate(missing_entries, 1):
             m = entry.metadata
             name = m.title[:40] + ".." if len(m.title) > 42 else m.title
             source = "ISBN" if m.isbn else "PDF"
-            click.echo(f"  [{i}/{total}] {name} ({source})...", nl=False)
+            click.echo(f"  [{i}/{len(missing_entries)}] {name} ({source})...", nl=False)
 
             result = ensure_cover(config.library_path, entry.id, m.isbn, entry.file_path)
 
@@ -1724,9 +1763,10 @@ def topics(ctx: click.Context) -> None:
 
     \b
     Commands:
-      build   Generate vocabulary from corpus and assign to all documents.
-      list    Show the current topic vocabulary.
-      assign  (Re)assign topics to one or all documents.
+      build     Generate vocabulary from corpus and assign to all documents.
+      list      Show the current topic vocabulary.
+      assign    (Re)assign topics to one or all documents.
+      subjects  Show the topic → subject mapping.
     """
 
 
@@ -1763,7 +1803,7 @@ def topics_build(ctx: click.Context, n_topics: int | None, yes: bool) -> None:
     db = Database(config.db_path)
 
     try:
-        from wst.topics import assign_topics, build_vocabulary, save_vocabulary
+        from wst.topics import assign_topics, backfill_subjects, build_vocabulary, save_vocabulary
 
         # Check for existing vocabulary
         existing = db.load_topics_vocabulary()
@@ -1786,8 +1826,10 @@ def topics_build(ctx: click.Context, n_topics: int | None, yes: bool) -> None:
         ai = get_ai_backend(config.ai_backend, config.ai_model)
 
         if fmt == "human":
-            click.echo("Step 1/3  Embedding documents and clustering...")
-        vocabulary, representative_docs = build_vocabulary(db, ai, n_topics=n_topics)
+            click.echo("Step 1/4  Embedding documents and clustering...")
+        vocabulary, representative_docs, topic_to_subject = build_vocabulary(
+            db, ai, n_topics=n_topics
+        )
 
         if not vocabulary:
             if fmt == "human":
@@ -1809,16 +1851,16 @@ def topics_build(ctx: click.Context, n_topics: int | None, yes: bool) -> None:
                 return
 
         if fmt == "human":
-            click.echo("Step 2/3  Assigning topics to documents...")
+            click.echo("Step 2/4  Assigning topics to documents...")
 
         assignments = assign_topics(db, ai, vocabulary)
 
         if fmt == "human":
-            click.echo("Step 3/3  Saving to database...")
+            click.echo("Step 3/4  Saving to database...")
 
-        save_vocabulary(db, vocabulary)
+        save_vocabulary(db, vocabulary, topic_to_subject)
 
-        # Persist assignments
+        # Persist topic assignments
         entries = db.list_all()
         entry_map = {e.id: e for e in entries}
         for doc_id, assigned in assignments.items():
@@ -1828,8 +1870,14 @@ def topics_build(ctx: click.Context, n_topics: int | None, yes: bool) -> None:
             entry.metadata.topics = assigned
             db.update(entry)
 
+        # Backfill subjects from topic→subject mapping
+        if fmt == "human":
+            click.echo("Step 4/4  Backfilling subjects from topic clusters...")
+        subject_updated = backfill_subjects(db, topic_to_subject)
+
         if fmt == "human":
             click.echo(f"\nDone. {len(assignments)} document(s) assigned topics.")
+            click.echo(f"      {subject_updated} document(s) had their subject updated.")
             click.echo(f"Vocabulary ({len(vocabulary)}): {', '.join(vocabulary)}")
             return
 
@@ -1838,7 +1886,9 @@ def topics_build(ctx: click.Context, n_topics: int | None, yes: bool) -> None:
         render_ok(
             {
                 "vocabulary": vocabulary,
+                "subjects": topic_to_subject,
                 "assigned_count": len(assignments),
+                "subjects_updated": subject_updated,
                 "assignments": {str(k): v for k, v in assignments.items()},
             },
             fmt=fmt,
@@ -1908,7 +1958,7 @@ def topics_assign(ctx: click.Context, doc_id: int | None, yes: bool) -> None:
     db = Database(config.db_path)
 
     try:
-        from wst.topics import assign_topics
+        from wst.topics import assign_topics, backfill_subjects
 
         vocabulary = db.load_topics_vocabulary()
         if not vocabulary:
@@ -1957,8 +2007,14 @@ def topics_assign(ctx: click.Context, doc_id: int | None, yes: bool) -> None:
             db.update(entry)
             updated += 1
 
+        # Backfill subjects from stored topic→subject mapping
+        topic_to_subject = db.load_topics_subjects()
+        subject_updated = backfill_subjects(db, topic_to_subject) if topic_to_subject else 0
+
         if fmt == "human":
             click.echo(f"Assigned topics to {updated} document(s).")
+            if subject_updated:
+                click.echo(f"Updated subjects for {subject_updated} document(s).")
             return
 
         from wst.output import render_ok
@@ -1966,10 +2022,57 @@ def topics_assign(ctx: click.Context, doc_id: int | None, yes: bool) -> None:
         render_ok(
             {
                 "updated": updated,
+                "subjects_updated": subject_updated,
                 "assignments": {str(k): v for k, v in assignments.items()},
             },
             fmt=fmt,
         )
+    finally:
+        db.close()
+
+
+@topics.command("subjects")
+@command_format_option()
+@click.pass_context
+def topics_subjects(ctx: click.Context) -> None:
+    """Show the topic → subject mapping derived from clustering.
+
+    \b
+    Examples:
+        wst topics subjects
+        wst topics subjects --format json
+    """
+    config: WstConfig = ctx.obj["config"]
+    fmt: str = ctx.obj.get("format", "human")
+    db = Database(config.db_path)
+
+    try:
+        topic_to_subject = db.load_topics_subjects()
+        if not topic_to_subject:
+            if fmt == "human":
+                click.echo("No subject mapping found. Run `wst topics build` first.")
+                return
+            from wst.output import render_ok
+
+            render_ok({"subjects": {}}, fmt=fmt)
+            return
+
+        if fmt == "human":
+            # Group by subject for readability
+            from collections import defaultdict
+
+            by_subject: dict[str, list[str]] = defaultdict(list)
+            for topic, subject in topic_to_subject.items():
+                by_subject[subject].append(topic)
+            click.echo(f"Topic → Subject mapping ({len(topic_to_subject)} topics):")
+            for subject in sorted(by_subject):
+                topics_in = ", ".join(sorted(by_subject[subject]))
+                click.echo(f"  {subject}: {topics_in}")
+            return
+
+        from wst.output import render_ok
+
+        render_ok({"subjects": topic_to_subject}, fmt=fmt)
     finally:
         db.close()
 
@@ -2039,7 +2142,7 @@ def _fix_topics_cmd(
     doc_type: str | None,
 ) -> None:
     """Assign topics (from existing vocabulary) to documents that have none."""
-    from wst.topics import assign_topics
+    from wst.topics import assign_topics, backfill_subjects
 
     vocabulary = db.load_topics_vocabulary()
     if not vocabulary:
@@ -2104,6 +2207,9 @@ def _fix_topics_cmd(
         entry.metadata.topics = assigned_topics
         db.update(entry)
         updated += 1
+
+    topic_to_subject = db.load_topics_subjects()
+    backfill_subjects(db, topic_to_subject)
 
     if fmt == "human":
         click.echo(f"Assigned topics to {updated} document(s).")

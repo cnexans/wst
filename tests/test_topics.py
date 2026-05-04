@@ -264,9 +264,10 @@ class TestBuildVocabulary:
 
         ai = _mock_ai("Cálculo")
         with patch.dict(sys.modules, self._fake_modules()):
-            vocab, rep_docs = build_vocabulary(db, ai)
+            vocab, rep_docs, topic_to_subject = build_vocabulary(db, ai)
         assert vocab == []
         assert rep_docs == {}
+        assert topic_to_subject == {}
 
     def test_raises_on_missing_deps(self, db):
         """build_vocabulary raises RuntimeError when sentence-transformers is missing."""
@@ -289,12 +290,12 @@ class TestBuildVocabulary:
         # Mock the entire function to avoid heavy ML dependencies in CI
         with patch(
             "wst.topics.build_vocabulary",
-            return_value=(["Matemáticas", "Literatura"], {}),
+            return_value=(["Matemáticas", "Literatura"], {}, {}),
         ):
             from wst.topics import build_vocabulary
 
             ai = _mock_ai("Matemáticas")
-            vocab, rep_docs = build_vocabulary(db, ai, n_topics=2)
+            vocab, rep_docs, topic_to_subject = build_vocabulary(db, ai, n_topics=2)
 
         assert isinstance(vocab, list)
         assert len(vocab) == 2
@@ -673,7 +674,7 @@ class TestTopicsBuildNonInteractive:
         runner = CliRunner()
         with (
             patch("wst.cli.WstConfig", return_value=cfg),
-            patch("wst.topics.build_vocabulary", return_value=(fake_vocab, {})),
+            patch("wst.topics.build_vocabulary", return_value=(fake_vocab, {}, {})),
             patch("wst.topics.assign_topics", return_value={1: ["Matemáticas"], 2: ["Ciencias"]}),
             patch("wst.topics.save_vocabulary") as mock_save,
         ):
@@ -695,7 +696,7 @@ class TestTopicsBuildNonInteractive:
         runner = CliRunner()
         with (
             patch("wst.cli.WstConfig", return_value=cfg),
-            patch("wst.topics.build_vocabulary", return_value=(fake_vocab, {})),
+            patch("wst.topics.build_vocabulary", return_value=(fake_vocab, {}, {})),
             patch("wst.topics.assign_topics", return_value={1: ["Física"], 2: ["Literatura"]}),
             patch("wst.topics.save_vocabulary") as mock_save,
         ):
