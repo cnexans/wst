@@ -20,6 +20,7 @@ from wst.topics import (
     _name_cluster,
     _parse_json_list,
     assign_topics,
+    assign_topics_single,
     load_vocabulary,
     save_vocabulary,
 )
@@ -173,6 +174,45 @@ class TestParseJsonList:
 # ---------------------------------------------------------------------------
 # assign_topics (mocked AI)
 # ---------------------------------------------------------------------------
+
+
+class TestAssignTopicsSingle:
+    def test_returns_valid_topics(self):
+        vocab = ["Matemáticas", "Literatura"]
+        ai = _mock_ai('["Matemáticas"]')
+        doc = {"title": "Cálculo", "author": "Author", "tags": [], "summary": "", "subject": None}
+        result = assign_topics_single(ai, vocab, doc)
+        assert result == ["Matemáticas"]
+
+    def test_filters_out_of_vocabulary_topics(self):
+        vocab = ["Matemáticas"]
+        ai = _mock_ai('["Matemáticas", "Inventado"]')
+        doc = {"title": "Book", "author": "A", "tags": [], "summary": "", "subject": None}
+        result = assign_topics_single(ai, vocab, doc)
+        assert result == ["Matemáticas"]
+
+    def test_returns_empty_on_bad_ai_response(self):
+        vocab = ["Matemáticas"]
+        ai = _mock_ai("not json at all")
+        doc = {"title": "Book", "author": "A", "tags": [], "summary": "", "subject": None}
+        result = assign_topics_single(ai, vocab, doc)
+        assert result == []
+
+    def test_prompt_contains_vocabulary(self):
+        captured: list[str] = []
+        ai = MagicMock()
+
+        def capture(prompt: str) -> str:
+            captured.append(prompt)
+            return '["Física"]'
+
+        ai._run_claude.side_effect = capture
+        vocab = ["Física", "Literatura"]
+        doc = {"title": "Book", "author": "A", "tags": [], "summary": "", "subject": None}
+        assign_topics_single(ai, vocab, doc)
+        assert captured, "AI was not called"
+        assert "Física" in captured[0]
+        assert "Literatura" in captured[0]
 
 
 class TestAssignTopics:

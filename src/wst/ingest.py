@@ -11,6 +11,7 @@ from wst.db import Database
 from wst.document import extract_doc_info, is_supported, write_doc_metadata
 from wst.models import LibraryEntry
 from wst.storage import StorageBackend, build_dest_path
+from wst.topics import assign_topics_single, load_vocabulary
 
 
 @dataclass
@@ -122,6 +123,21 @@ def ingest_file(
         return IngestResult(path.name, "failed", f"Error generating metadata: {e}")
 
     metadata.page_count = page_count
+
+    # If a KMeans vocabulary exists, override the LLM-chosen topics with
+    # vocabulary-constrained ones so ingested docs stay aligned with the corpus.
+    vocabulary = load_vocabulary(db)
+    if vocabulary:
+        doc = {
+            "title": metadata.title,
+            "author": metadata.author,
+            "tags": metadata.tags,
+            "summary": (metadata.summary or "")[:300],
+            "subject": metadata.subject,
+        }
+        constrained = assign_topics_single(ai, vocabulary, doc)
+        if constrained:
+            metadata.topics = constrained
 
     # Build entry (preserve original extension)
     ext = path.suffix.lower()
