@@ -1,7 +1,8 @@
 # Push an annotated tag 'vX.Y.Z' (matching pyproject.toml) to trigger:
-# tests, PyPI publish, .dmg build, optional Chocolatey push, and a GitHub
-# Release with all artifacts attached. Tags are normally pushed by
-# auto-release.yml; manual tag pushes work as an emergency-hotfix path.
+# tests, PyPI publish, .dmg + .exe + .AppImage + .deb builds, optional
+# Chocolatey push, and a GitHub Release with all artifacts attached.
+# Tags are normally pushed by auto-release.yml; manual tag pushes work
+# as an emergency-hotfix path.
 
 name: Release on tag
 
@@ -39,15 +40,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/download-artifact@v4
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
         with:
-          name: python-dist
-          path: dist/
+          path: release-artifacts
 
-      - uses: actions/download-artifact@v4
-        with:
-          name: macos-dmg
-          path: dmg/
+      - name: Flatten artifact directories
+        run: |
+          mkdir -p flat
+          find release-artifacts -type f -exec cp {} flat/ \;
+          ls -la flat/
 
       - name: Create GitHub release with artifacts
         uses: softprops/action-gh-release@v2
@@ -55,6 +57,12 @@ jobs:
           tag_name: ${{ github.ref_name }}
           generate_release_notes: true
           files: |
-            dist/*.whl
-            dist/*.tar.gz
-            dmg/*.dmg
+            flat/*.whl
+            flat/*.tar.gz
+            flat/*.dmg
+            flat/*.exe
+            flat/*.AppImage
+            flat/*.deb
+            flat/wst-macos
+            flat/wst-linux-x86_64
+            flat/wst.exe

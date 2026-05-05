@@ -1,7 +1,7 @@
 # RFC 0007: Multiplatform Releases
 
 **Issue**: #21  
-**Status**: Draft — awaiting approval  
+**Status**: Implementing  
 **Branch**: `rfc/21-soporte-multiplataforma`
 
 ---
@@ -239,11 +239,18 @@ github-release:
 
 ## Implementation Plan
 
-- [ ] Update `dmg` job to also upload standalone `wst` CLI binary
-- [ ] Add `windows-installer` job to `release.yml` (CLI + NSIS .exe)
-- [ ] Add `linux-x86_64` job to `release.yml` (CLI + .AppImage + .deb)
-- [ ] Update `github-release` job to download and attach all artifacts
-- [ ] Test on a pre-release tag (`v0.x.y-rc1`) before merging
-- [ ] Verify `.AppImage` and `.deb` work on Ubuntu 22.04 and 24.04
-- [ ] Verify `.exe` installs cleanly on Windows 11
-- [ ] Verify standalone CLI binaries run without the GUI installed
+- [x] Update `dmg` job to also upload standalone `wst` CLI binary as `wst-macos` (platform-tagged for the release page).
+- [x] Add `windows-installer` job to `release.yml` (CLI `wst.exe` + NSIS `.exe`). Mirrors macOS build flags: `numpy`/`sklearn`/`scipy` `--collect-all`.
+- [x] Add `linux-x86_64` job to `release.yml` (CLI `wst-linux-x86_64` + `.AppImage` + `.deb`). Installs `libwebkit2gtk-4.1-dev` and the other Tauri Linux deps.
+- [x] Update `github-release` job to download every artifact, flatten the directory tree (each upload-artifact creates a subdir), and attach via `softprops/action-gh-release@v2`.
+- [ ] **Smoke test on the next real release** — once a `feat:`/`fix:` lands on main and `auto-release.yml` tags `vX.Y.Z`, watch `release-on-tag.yml` and confirm all five non-Python artifacts (.dmg, .exe NSIS, .AppImage, .deb, plus the three CLI binaries) reach the GitHub release page.
+- [ ] Verify `.AppImage` and `.deb` install cleanly on Ubuntu 22.04 / 24.04.
+- [ ] Verify `.exe` installs cleanly on Windows 11.
+- [ ] Verify each standalone CLI binary runs without the GUI installed.
+
+### Implementation notes
+
+- The macOS `dmg` and Linux `linux-x86_64` jobs copy `dist/wst` to a platform-tagged filename (`wst-macos` / `wst-linux-x86_64`) before uploading so the release page shows distinct asset names. Windows uploads `dist/wst.exe` directly — Windows users expect the `.exe` extension.
+- All three Tauri builds run with `TAURI_SIGNING_PRIVATE_KEY: ""` (no code signing). macOS users still need `xattr -cr` (documented in README); Windows users will see SmartScreen warnings until we sign.
+- Chocolatey continues to push to the registry separately (kept `continue-on-error: true`); the new `windows-installer` job is the direct-download channel.
+- ARM64 Linux skipped per Q1 — no paid runners.
