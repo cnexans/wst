@@ -1,7 +1,7 @@
 # RFC 0009: Reliable releases on merge to main
 
 **Issue**: #25
-**Status**: Draft — awaiting approval
+**Status**: Reviewed — open questions resolved, awaiting `approved` label
 **Branch**: `rfc/25-release-on-merge`
 
 ---
@@ -84,25 +84,71 @@ Regardless of which trigger model we pick, the build/publish steps should live i
 | Use `release-please` or `semantic-release` GitHub Apps | Heavier dependency; project is small enough that 30–50 lines of bash beats pulling in a release bot. Worth revisiting if Option A's bump logic grows complex. |
 | Keep `auto-release.yml` and have it **fail loudly** when commits since last release contain `feat:`/`fix:` but version wasn't bumped | Decent middle ground but still requires manual bump PRs. Could be a stepping stone toward Option A. |
 
-## Open Questions
+## Resolved Decisions
 
-> **Q1**: Option A (auto-bump on merge) or Option B (tag-driven only)? Or the middle-ground "fail loudly when bump is missing"?
+User answers from issue #25 review:
 
-> **Q2**: If Option A: what is the bump rule for commits like `refactor:` that touch user-visible code? Patch bump, or no release? My default would be no release — `refactor:` is an internal contract.
+| # | Decision |
+|---|---|
+| Q1 | **Option A — Auto-bump on merge to main.** |
+| Q2 | **Conventional Commits drive the bump.** `feat:` → minor, `fix:`/`perf:` → patch, anything else (`refactor:`, `chore:`, `docs:`, `rfc:`, `test:`, `style:`, `ci:`) → no release. A `BREAKING CHANGE:` footer or `feat!:`/`fix!:` bumps minor (we're pre-1.0; no major bumps until 1.0). |
+| Q3 | **Direct commit on `main`** by `github-actions[bot]`. No auto-merging PR; less churn. |
+| Q4 | **Unify the build matrix.** Collapse `auto-release.yml` and `release.yml` into a single reusable workflow that has the union of both (numpy/sklearn/scipy `--collect-all` flags, Chocolatey job kept as `continue-on-error`). |
+| Q5 | **This restructuring lands *before* RFC 0007 (PR #23).** That keeps #23's diff scoped to "add Windows + Linux jobs to the existing reusable workflow" rather than "rewrite the release pipeline AND add platforms." |
 
-> **Q3**: If Option A: should the auto-bump commit be made by `github-actions[bot]` directly on `main`, or via an auto-merging PR? Direct commit is simpler; PR is auditable but adds churn.
+## Architecture After This RFC
 
-> **Q4**: Should the build matrix in `release.yml` be unified with the one in `auto-release.yml`? Today they diverge (numpy/sklearn/scipy collection, Chocolatey job). This RFC proposes deleting one and keeping the union of both.
+```
+Push to main
+  └─► .github/workflows/auto-release.yml   (rewritten as bump-only)
+        ├─ inspect commits via Conventional Commits
+        ├─ if bump kind ∈ {minor, patch}:
+        │     ├─ edit pyproject.toml
+        │     ├─ commit "chore: bump version to X.Y.Z [skip ci]"
+        │     └─ push tag vX.Y.Z (the tag push triggers the next workflow)
+        └─ else: no-op
 
-> **Q5**: PR #23 (RFC 0007 — multi-platform releases) proposes adding Windows + Linux build jobs to the release workflow. Should this RFC's restructuring be done **before**, **after**, or **as part of** that work? Doing it before makes #23's diff smaller; doing it after avoids two consecutive workflow rewrites.
+Push tag v*
+  └─► .github/workflows/release-on-tag.yml  (kept, lightly edited)
+        └─ calls release.yml (reusable) with version + creates GitHub release
+
+release.yml (reusable, consolidated build matrix)
+  ├─ test          (ruff + pytest)
+  ├─ pypi          (build wheel + sdist, publish)
+  ├─ dmg           (macOS — pyinstaller CLI sidecar + Tauri .dmg, with numpy/sklearn/scipy collected)
+  ├─ chocolatey    (Windows — continue-on-error, registry push only)
+  └─ github-release (download artifacts, attach to release)
+```
+
+`tag-release.yml` (manual `workflow_dispatch`) is deleted. With auto-bump in place, the manual path is no longer needed; an emergency hotfix can still be cut by pushing a `vX.Y.Z` tag directly.
 
 ## Implementation Plan
 
-Plan deferred until Q1 (trigger model) is answered. Once decided, the plan will look approximately like:
+- [ ] **Delete** `tag-release.yml` (manual bump path becomes obsolete).
+- [ ] **Rewrite** `auto-release.yml` so it:
+  - parses commit messages in `${{ github.event.before }}..${{ github.sha }}` for Conventional-Commit prefixes;
+  - decides bump kind (`minor` for `feat:`/`feat!:`/`BREAKING CHANGE:`, `patch` for `fix:`/`perf:`, none otherwise);
+  - if bumping: edits `pyproject.toml`, commits `chore: bump version to X.Y.Z [skip ci]` as `github-actions[bot]`, pushes tag `vX.Y.Z`;
+  - exits without invoking build steps directly — the tag push is what triggers the build.
+- [ ] **Consolidate** `release.yml`:
+  - merge the macOS build steps from `auto-release.yml` into `release.yml`'s `dmg` job (the `--collect-all numpy/sklearn/scipy` flags);
+  - keep `chocolatey` job with `continue-on-error: true`;
+  - keep `pypi` and `test` jobs as-is;
+  - the existing `github-release` job in `release-on-tag.yml` (uses `softprops/action-gh-release@v2`) gains responsibility for downloading and attaching the wheel/sdist/dmg artifacts.
+- [ ] **Add a guard** for empty pushes (force-push, branch sync) so we never bump on a no-op push.
+- [ ] **Document** the flow in `CONTRIBUTING.md` (one paragraph: "merge a `feat:` or `fix:` to main → bot tags + releases automatically; merge anything else → no release; emergency hotfix → push a `v*` tag manually").
+- [ ] **Smoke test** by merging a small `fix:` PR and confirming `v0.10.4` is auto-tagged and built end-to-end.
+- [ ] **Hand off to PR #23** once merged: that PR adds Windows + Linux jobs to the consolidated `release.yml` (not to `auto-release.yml`).
 
-- [ ] Delete the workflows we're abandoning (depends on Q1).
-- [ ] Rewrite the canonical trigger workflow (auto-bump logic for Option A, or simplified tag-driven for Option B).
-- [ ] Consolidate build steps into the reusable `release.yml`; remove duplication.
-- [ ] Update CONTRIBUTING / README with the new release flow.
-- [ ] Smoke-test by cutting a `v0.10.4` patch release.
-- [ ] Coordinate with PR #23 (Q5) so multi-platform builds land in the consolidated `release.yml`, not the soon-to-be-deleted `auto-release.yml`.
+## Risk: recursion guard
+
+The auto-bump commit must not re-trigger `auto-release.yml`. Two layers:
+
+1. Append `[skip ci]` to the commit message (GitHub Actions native).
+2. The workflow itself filters: if `github.actor == 'github-actions[bot]'` and `github.event.head_commit.message` starts with `chore: bump version to`, exit early.
+
+Belt-and-suspenders — if `[skip ci]` ever stops working (its semantics have shifted before), the actor+message filter still catches it.
+
+## Risk: PR #23 conflict
+
+PR #23 currently edits `release.yml` to add Windows installer + Linux package jobs. Once this RFC merges, PR #23 will need a rebase since `release.yml`'s `dmg` job will have absorbed `auto-release.yml`'s build flags. The diff in #23 should shrink (no longer needs to mirror the divergent macOS build steps). Will coordinate with the next iteration of #23 after #25 ships.
