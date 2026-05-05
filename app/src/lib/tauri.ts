@@ -79,3 +79,24 @@ export async function backupDocumentToIcloud(id: number): Promise<void> {
     args: ["backup", "icloud", String(id), "--format", "json"],
   });
 }
+
+export interface ExtraInfo {
+  installed: boolean;
+  description: string;
+  package: string;
+  check_modules: string[];
+  system_deps: string[];
+}
+
+export async function getExtrasStatus(): Promise<Record<string, ExtraInfo>> {
+  const raw = await invoke<string>("run_wst_command", {
+    args: ["install", "--list", "--json"],
+  });
+  return JSON.parse(raw);
+}
+
+export async function installExtra(name: string, upgrade = false): Promise<string> {
+  const args = ["install", name];
+  if (upgrade) args.push("--upgrade");
+  return invoke<string>("run_wst_command", { args });
+}

@@ -2245,3 +2245,36 @@ def _fix_topics_cmd(
     from wst.output import render_ok
 
     render_ok({"scanned": len(entries), "updated": updated}, fmt=fmt)
+
+
+@cli.command("install")
+@click.argument("extra", required=False)
+@click.option("--list", "list_extras", is_flag=True, help="Show install status for all extras.")
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable JSON output (with --list).")
+@click.option("--upgrade", is_flag=True, help="Upgrade an already-installed extra.")
+def install_cmd(extra: str | None, list_extras: bool, as_json: bool, upgrade: bool) -> None:
+    """Install optional feature packages (ocr, topics).
+
+    \b
+    Examples:
+      wst install ocr           # install OCR support + system deps
+      wst install topics        # install topic modeling support
+      wst install ocr --upgrade # upgrade OCR packages
+      wst install --list        # show what's installed
+    """
+    from wst.install import install_extra
+    from wst.install import list_extras as _list_extras
+
+    if list_extras or (extra is None and not upgrade):
+        _list_extras(as_json=as_json)
+        return
+
+    if extra is None:
+        raise click.UsageError("Specify an extra to install, or use --list.")
+
+    try:
+        install_extra(extra, upgrade=upgrade)
+    except ValueError as e:
+        raise click.BadParameter(str(e), param_hint="extra") from e
+    except Exception as e:
+        raise click.ClickException(str(e)) from e

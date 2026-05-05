@@ -20,10 +20,11 @@ import {
 } from "./lib/tauri";
 import SearchBar from "./components/SearchBar";
 import Sidebar from "./components/Sidebar";
-import Toolbar from "./components/Toolbar";
+import Toolbar, { showExtras, setShowExtras } from "./components/Toolbar";
 import BookGrid from "./components/BookGrid";
 import BookList from "./components/BookList";
 import BookDetail from "./components/BookDetail";
+import ExtrasPanel from "./components/ExtrasPanel";
 
 export default function App() {
   let debounceTimer: number | undefined;
@@ -106,6 +107,9 @@ export default function App() {
         </main>
       </div>
       <BookDetail />
+      <Show when={showExtras()}>
+        <ExtrasPanel onClose={() => setShowExtras(false)} />
+      </Show>
     </div>
   );
 }
