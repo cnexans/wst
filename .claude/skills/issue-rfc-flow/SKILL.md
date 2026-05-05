@@ -81,15 +81,26 @@ Use the `/rfc` skill to create the RFC document. It handles naming, numbering, a
 
 While an issue is `awaiting_approval`, **do not block — move on** to the next issue in the queue and begin Phase 1 for it.
 
-To check for approvals/feedback on blocked issues, periodically run:
-```
-gh pr view <pr-number> --comments
-gh issue view <issue-number> --comments
+To check for approvals/feedback on blocked issues, you **must check both** the original issue AND the RFC PR — admins often reply directly on the issue, not the PR. Use the GitHub API (not `gh pr view`, which has a deprecated projects warning):
+
+```bash
+# Comments on the ORIGINAL issue (use the issue number, e.g. 21)
+gh api repos/:owner/:repo/issues/<issue-number>/comments \
+  --jq '.[] | {user: .user.login, body: .body}'
+
+# Comments on the RFC PR (use the PR number, e.g. 23)
+gh api repos/:owner/:repo/issues/<pr-number>/comments \
+  --jq '.[] | {user: .user.login, body: .body}'
+
+# Formal PR reviews
+gh api repos/:owner/:repo/pulls/<pr-number>/reviews \
+  --jq '.[] | {user: .user.login, state: .state, body: .body}'
 ```
 
-Look for admin comments containing:
+Scan **all three** for each tracked issue/PR pair. Look for admin comments containing:
 - `approved` (case-insensitive) → transition to Phase 4
-- `changes:` or `change request` → transition back to Phase 2 (update RFC)
+- `changes:` or `change request` or `please update` → transition back to Phase 2 (update RFC)
+- Inline answers to open questions → incorporate into the RFC before proceeding
 
 ### Phase 4 — Implement
 
