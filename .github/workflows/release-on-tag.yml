@@ -1,5 +1,7 @@
-# From v0.8.2 onward: push an annotated tag 'vX.Y.Z' matching pyproject.toml to run tests,
-# publish to PyPI, optional Chocolatey, and create/update the GitHub Release.
+# Push an annotated tag 'vX.Y.Z' (matching pyproject.toml) to trigger:
+# tests, PyPI publish, .dmg build, optional Chocolatey push, and a GitHub
+# Release with all artifacts attached. Tags are normally pushed by
+# auto-release.yml; manual tag pushes work as an emergency-hotfix path.
 
 name: Release on tag
 
@@ -36,7 +38,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: softprops/action-gh-release@v2
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-dist
+          path: dist/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-dmg
+          path: dmg/
+
+      - name: Create GitHub release with artifacts
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           generate_release_notes: true
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
+            dmg/*.dmg

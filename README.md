@@ -183,17 +183,19 @@ See [docs/README.md](docs/README.md) for architecture details and diagrams.
 
 ## Releasing
 
-To publish a new version to PyPI:
+Releases are automatic. Use [Conventional Commits](https://www.conventionalcommits.org/) and the version will bump itself when you merge to `main`:
 
-```bash
-# 1. Bump version in pyproject.toml
-# 2. Trigger the release workflow from GitHub Actions:
-gh workflow run "Create Tag and Release" \
-  --field version="X.Y.Z" \
-  --field release_notes="Release notes here"
-```
+| Commit prefix on `main` | Effect |
+|---|---|
+| `feat:` / `feat!:` / `BREAKING CHANGE:` | minor bump (e.g. `0.10.3` → `0.11.0`) |
+| `fix:` / `perf:` | patch bump (e.g. `0.10.3` → `0.10.4`) |
+| `refactor:` / `chore:` / `docs:` / `rfc:` / `test:` / `style:` / `ci:` | no release |
 
-This creates a git tag, a GitHub Release, and publishes to PyPI automatically.
+On a qualifying merge, `auto-release.yml` bumps `pyproject.toml`, commits the bump as `github-actions[bot]` with `[skip ci]`, and pushes a `vX.Y.Z` tag. The tag push then triggers `release-on-tag.yml`, which runs tests, builds the macOS `.dmg`, publishes to PyPI, optionally pushes to Chocolatey, and attaches all artifacts to a GitHub Release.
+
+Pre-1.0: `BREAKING CHANGE:` bumps minor (no major bumps until `1.0.0`).
+
+**Emergency hotfix:** push a `vX.Y.Z` tag directly. `release-on-tag.yml` will pick it up and build/release without needing the auto-bump step.
 
 ## License
 

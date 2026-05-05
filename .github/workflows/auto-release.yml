@@ -1,9 +1,18 @@
 name: Auto Release
 
-# Fires on every push to main (i.e. when a PR is merged).
-# Checks whether the version in pyproject.toml already has a GitHub release;
-# if not, runs tests, builds the macOS .dmg, publishes to PyPI, and creates
-# a GitHub release with the .dmg + Python wheel attached as artifacts.
+# Fires on every push to main. Inspects the new commits via Conventional Commits
+# and, if any of them warrant a release, bumps pyproject.toml, commits the bump
+# with [skip ci], and pushes a vX.Y.Z tag. The tag push triggers
+# release-on-tag.yml, which builds and publishes artifacts.
+#
+# Bump rules:
+#   feat:  / feat!: / BREAKING CHANGE   -> minor
+#   fix:   / perf:                       -> patch
+#   anything else (refactor:, chore:,    -> no release
+#                  docs:, rfc:, test:,
+#                  style:, ci:)
+#
+# Pre-1.0: BREAKING CHANGE bumps minor (no major bumps until 1.0.0).
 
 on:
   push:
@@ -13,165 +22,87 @@ permissions:
   contents: write
 
 jobs:
-  # -----------------------------------------------------------------------
-  # Determine if this push introduces a new version that hasn't been released
-  # -----------------------------------------------------------------------
-  check:
+  bump:
     runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.meta.outputs.version }}
-      should_release: ${{ steps.meta.outputs.should_release }}
-    steps:
-      - uses: actions/checkout@v4
 
-      - name: Read version and check if release exists
-        id: meta
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          VERSION=$(grep '^version' pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          if gh release view "v$VERSION" > /dev/null 2>&1; then
-            echo "Release v$VERSION already exists — skipping."
-            echo "should_release=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "New version v$VERSION — will release."
-            echo "should_release=true" >> "$GITHUB_OUTPUT"
-          fi
+    # Recursion guard #1: skip the bump commit this workflow itself produced.
+    # [skip ci] in the commit message is the primary defense; this is belt-and-suspenders
+    # in case [skip ci] semantics change.
+    if: |
+      !(github.actor == 'github-actions[bot]'
+        && startsWith(github.event.head_commit.message, 'chore: bump version to'))
 
-  # -----------------------------------------------------------------------
-  # Test + lint gate (runs only when a new release is needed)
-  # -----------------------------------------------------------------------
-  test:
-    needs: check
-    if: needs.check.outputs.should_release == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install -e ".[dev]"
-      - run: ruff check src/ tests/
-      - run: ruff format --check src/ tests/
-      - run: pytest -v
-
-  # -----------------------------------------------------------------------
-  # Build Python wheel + sdist, publish to PyPI
-  # -----------------------------------------------------------------------
-  pypi:
-    needs: [check, test]
-    if: needs.check.outputs.should_release == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Build distribution
-        run: |
-          pip install build
-          python -m build
-
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: python-dist
-          path: dist/
-
-  # -----------------------------------------------------------------------
-  # Build macOS .dmg (PyInstaller CLI sidecar + Tauri app)
-  # -----------------------------------------------------------------------
-  dmg:
-    needs: [check, test]
-    if: needs.check.outputs.should_release == 'true'
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - name: Build standalone wst CLI binary
-        run: |
-          python -m venv .venv
-          .venv/bin/pip install -e . numpy scikit-learn scipy pyinstaller
-          .venv/bin/pyinstaller --onefile --name wst \
-            --collect-all wst \
-            --collect-all numpy \
-            --collect-all sklearn \
-            --collect-all scipy \
-            pyinstaller_entry.py
-          mkdir -p app/src-tauri/binaries
-          TRIPLE=$(rustc -vV | grep '^host:' | cut -d' ' -f2)
-          cp dist/wst "app/src-tauri/binaries/wst-$TRIPLE"
-          chmod +x "app/src-tauri/binaries/wst-$TRIPLE"
-
-      - name: Build Tauri app
-        run: cd app && npm ci && npx tauri build
-        env:
-          # Skip code-signing in CI; set APPLE_* secrets here for signed builds
-          TAURI_SIGNING_PRIVATE_KEY: ""
-
-      - name: Locate .dmg
-        id: dmg
-        run: |
-          DMG=$(ls app/src-tauri/target/release/bundle/dmg/*.dmg | head -1)
-          echo "path=$DMG" >> "$GITHUB_OUTPUT"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: macos-dmg
-          path: ${{ steps.dmg.outputs.path }}
-
-  # -----------------------------------------------------------------------
-  # Create GitHub release, tag, and attach artifacts
-  # -----------------------------------------------------------------------
-  release:
-    needs: [check, pypi, dmg]
-    if: needs.check.outputs.should_release == 'true'
-    runs-on: ubuntu-latest
-    env:
-      VERSION: ${{ needs.check.outputs.version }}
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
         with:
-          # Need write access to push the tag
+          fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions/download-artifact@v4
-        with:
-          name: python-dist
-          path: dist/
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: macos-dmg
-          path: dmg/
-
-      - name: Create tag and GitHub release
+      - name: Determine bump kind from commits
+        id: bump
         run: |
-          git config user.name "github-actions[bot]"
+          BEFORE="${{ github.event.before }}"
+          AFTER="${{ github.sha }}"
+
+          # Empty-push guard: force-push to same SHA, branch sync, etc.
+          if [ "$BEFORE" = "$AFTER" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            echo "Empty or initial push — nothing to inspect."
+            echo "kind=none" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # First-line of every commit subject in the push.
+          MESSAGES=$(git log --format='%s%n%b%n---' "$BEFORE..$AFTER")
+          echo "Inspecting commits in $BEFORE..$AFTER"
+          echo "$MESSAGES"
+
+          KIND=none
+          # Minor bump on feat / feat! / BREAKING CHANGE
+          if echo "$MESSAGES" | grep -qE '^(feat(\([^)]+\))?!?: |BREAKING CHANGE:)'; then
+            KIND=minor
+          # Patch bump on fix / perf
+          elif echo "$MESSAGES" | grep -qE '^(fix|perf)(\([^)]+\))?!?: '; then
+            KIND=patch
+          fi
+
+          echo "Bump kind: $KIND"
+          echo "kind=$KIND" >> "$GITHUB_OUTPUT"
+
+      - name: Compute next version
+        id: version
+        if: steps.bump.outputs.kind != 'none'
+        run: |
+          CURRENT=$(grep '^version' pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+
+          case "${{ steps.bump.outputs.kind }}" in
+            minor)
+              MINOR=$((MINOR + 1))
+              PATCH=0
+              ;;
+            patch)
+              PATCH=$((PATCH + 1))
+              ;;
+          esac
+
+          NEXT="$MAJOR.$MINOR.$PATCH"
+          echo "Bumping $CURRENT -> $NEXT"
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+          echo "next=$NEXT"       >> "$GITHUB_OUTPUT"
+
+      - name: Bump pyproject.toml, commit, tag, push
+        if: steps.bump.outputs.kind != 'none'
+        env:
+          NEXT: ${{ steps.version.outputs.next }}
+        run: |
+          sed -i "s/^version = \".*\"/version = \"$NEXT\"/" pyproject.toml
+
+          git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag "v$VERSION" -m "Release v$VERSION"
-          git push origin "v$VERSION"
-          gh release create "v$VERSION" \
-            --title "v$VERSION" \
-            --generate-notes \
-            dist/*.whl \
-            dist/*.tar.gz \
-            dmg/*.dmg
+
+          git add pyproject.toml
+          git commit -m "chore: bump version to $NEXT [skip ci]"
+          git tag "v$NEXT" -m "Release v$NEXT"
+
+          git push origin HEAD:main
+          git push origin "v$NEXT"

@@ -1,7 +1,7 @@
 # RFC 0009: Reliable releases on merge to main
 
 **Issue**: #25
-**Status**: Reviewed — open questions resolved, awaiting `approved` label
+**Status**: Implementing
 **Branch**: `rfc/25-release-on-merge`
 
 ---
@@ -124,21 +124,15 @@ release.yml (reusable, consolidated build matrix)
 
 ## Implementation Plan
 
-- [ ] **Delete** `tag-release.yml` (manual bump path becomes obsolete).
-- [ ] **Rewrite** `auto-release.yml` so it:
-  - parses commit messages in `${{ github.event.before }}..${{ github.sha }}` for Conventional-Commit prefixes;
-  - decides bump kind (`minor` for `feat:`/`feat!:`/`BREAKING CHANGE:`, `patch` for `fix:`/`perf:`, none otherwise);
-  - if bumping: edits `pyproject.toml`, commits `chore: bump version to X.Y.Z [skip ci]` as `github-actions[bot]`, pushes tag `vX.Y.Z`;
-  - exits without invoking build steps directly — the tag push is what triggers the build.
-- [ ] **Consolidate** `release.yml`:
-  - merge the macOS build steps from `auto-release.yml` into `release.yml`'s `dmg` job (the `--collect-all numpy/sklearn/scipy` flags);
-  - keep `chocolatey` job with `continue-on-error: true`;
-  - keep `pypi` and `test` jobs as-is;
-  - the existing `github-release` job in `release-on-tag.yml` (uses `softprops/action-gh-release@v2`) gains responsibility for downloading and attaching the wheel/sdist/dmg artifacts.
-- [ ] **Add a guard** for empty pushes (force-push, branch sync) so we never bump on a no-op push.
-- [ ] **Document** the flow in `CONTRIBUTING.md` (one paragraph: "merge a `feat:` or `fix:` to main → bot tags + releases automatically; merge anything else → no release; emergency hotfix → push a `v*` tag manually").
-- [ ] **Smoke test** by merging a small `fix:` PR and confirming `v0.10.4` is auto-tagged and built end-to-end.
-- [ ] **Hand off to PR #23** once merged: that PR adds Windows + Linux jobs to the consolidated `release.yml` (not to `auto-release.yml`).
+- [x] **Delete** `tag-release.yml` (manual bump path becomes obsolete).
+- [x] **Rewrite** `auto-release.yml` as bump-only: parses commit subjects in `${{ github.event.before }}..${{ github.sha }}` via Conventional Commits, decides bump kind (`minor` for `feat:`/`feat!:`/`BREAKING CHANGE:`, `patch` for `fix:`/`perf:`), edits `pyproject.toml`, commits `chore: bump version to X.Y.Z [skip ci]` as `github-actions[bot]`, pushes tag `vX.Y.Z`.
+- [x] **Consolidate** `release.yml`: macOS `dmg` job now installs `numpy`/`scikit-learn`/`scipy` and runs PyInstaller with `--collect-all` for each. `pypi`, `test`, `chocolatey` jobs unchanged.
+- [x] **Move artifact attachment** into `release-on-tag.yml`'s `github-release` job using `softprops/action-gh-release@v2` with `files:` for wheel/sdist/dmg.
+- [x] **Empty-push guard** added (handles force-push and zero-SHA initial pushes).
+- [x] **Recursion guards (×2)**: `[skip ci]` on the bump commit + a workflow-level `if:` filter on actor + commit message prefix.
+- [x] **Document** the new flow in `README.md` (Releasing section).
+- [ ] **Smoke test** — happens when this PR merges (the merge itself uses `feat:` so a release should fire; after merge, look for `v0.11.0` to be auto-tagged and built end-to-end).
+- [ ] **Hand off to PR #23** once merged: that PR adds Windows + Linux jobs to the consolidated `release.yml` (not to `auto-release.yml`). PR #23 will need a small rebase since the `dmg` job already absorbed the divergent flags.
 
 ## Risk: recursion guard
 

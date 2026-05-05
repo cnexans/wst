@@ -1,5 +1,10 @@
 name: Release
 
+# Reusable build/publish pipeline called by release-on-tag.yml. Builds the
+# Python wheel + sdist, the macOS .dmg (with PyInstaller CLI sidecar bundling
+# numpy/sklearn/scipy), and pushes to PyPI + Chocolatey. Each job uploads
+# its artifacts; release-on-tag.yml's github-release job collects and attaches.
+
 on:
   workflow_call:
     inputs:
@@ -12,11 +17,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: v${{ inputs.version }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: pip install -e ".[dev]"
       - run: ruff check src/ tests/
+      - run: ruff format --check src/ tests/
       - run: pytest -v
 
   pypi:
@@ -25,7 +33,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.version && format('v{0}', inputs.version) || github.ref }}
+          ref: v${{ inputs.version }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -46,7 +54,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.version && format('v{0}', inputs.version) || github.ref }}
+          ref: v${{ inputs.version }}
 
       - uses: actions/setup-python@v5
         with:
@@ -61,8 +69,13 @@ jobs:
       - name: Build standalone wst CLI binary
         run: |
           python -m venv .venv
-          .venv/bin/pip install -e . pyinstaller
-          .venv/bin/pyinstaller --onefile --name wst --collect-all wst pyinstaller_entry.py
+          .venv/bin/pip install -e . numpy scikit-learn scipy pyinstaller
+          .venv/bin/pyinstaller --onefile --name wst \
+            --collect-all wst \
+            --collect-all numpy \
+            --collect-all sklearn \
+            --collect-all scipy \
+            pyinstaller_entry.py
           mkdir -p app/src-tauri/binaries
           TRIPLE=$(rustc -vV | grep '^host:' | cut -d' ' -f2)
           cp dist/wst "app/src-tauri/binaries/wst-$TRIPLE"
@@ -71,6 +84,7 @@ jobs:
       - name: Build Tauri app
         run: cd app && npm ci && npx tauri build
         env:
+          # Skip code-signing in CI; set APPLE_* secrets here for signed builds
           TAURI_SIGNING_PRIVATE_KEY: ""
 
       - name: Locate .dmg
@@ -91,11 +105,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.version && format('v{0}', inputs.version) || github.ref }}
-      - name: Set version from tag
+          ref: v${{ inputs.version }}
+      - name: Set version in nuspec
         shell: pwsh
         run: |
-          $version = "${{ inputs.version || github.ref_name }}".TrimStart("v")
+          $version = "${{ inputs.version }}"
           (Get-Content packaging/chocolatey/wst.nuspec) -replace '<version>.*</version>', "<version>$version</version>" | Set-Content packaging/chocolatey/wst.nuspec
       - name: Pack and push
         shell: pwsh
