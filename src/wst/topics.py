@@ -219,11 +219,14 @@ def build_vocabulary(
     else:
         # Use existing vocabulary size as a floor so adding a few new documents
         # doesn't collapse the vocabulary from e.g. 19 topics down to 5.
-        effective_min = max(2, min_topics or 2)
+        # Also scale the minimum with corpus size: for large libraries the trivial
+        # 2-cluster split scores highest on silhouette but is never useful.
+        corpus_min = max(2, min(8, n_docs // 25))
+        effective_min = max(corpus_min, min_topics or corpus_min)
         k = _optimal_k(
             embeddings,
             min_k=min(effective_min, n_docs),
-            max_k=min(max(20, effective_min), n_docs),
+            max_k=min(max(25, effective_min), n_docs),
         )
 
     # KMeans clustering
