@@ -1,7 +1,7 @@
 # RFC 0008: Install Extras via CLI and GUI
 
 **Issue**: #22  
-**Status**: Draft — awaiting approval  
+**Status**: Implementing  
 **Branch**: `rfc/22-instalacion-paquetes-extra`
 
 ---
@@ -23,12 +23,13 @@ This friction is especially high for non-technical users using the Tauri app. Th
 
 ### 1 — `wst install <extra>` CLI command
 
-Add a new top-level command that installs an optional extras group into the current Python environment:
+Add a new top-level command that installs an optional extras group:
 
 ```
-wst install ocr       # installs wst-library[ocr]
+wst install ocr       # installs wst-library[ocr] + system deps (Ghostscript, Tesseract)
 wst install topics    # installs wst-library[topics]
 wst install --list    # shows all extras and their install status
+wst install ocr --upgrade   # force upgrade of already-installed extra
 ```
 
 Implementation in `src/wst/cli.py`:
@@ -42,19 +43,12 @@ EXTRAS = {
 @cli.command()
 @click.argument("extra", required=False)
 @click.option("--list", "list_extras", is_flag=True)
-def install(extra: str | None, list_extras: bool) -> None:
+@click.option("--upgrade", is_flag=True)
+def install(extra: str | None, list_extras: bool, upgrade: bool) -> None:
     """Install optional feature packages."""
 ```
 
-The command resolves the Python executable via `sys.executable` and runs:
-
-```python
-subprocess.run([sys.executable, "-m", "pip", "install", package_spec], check=True)
-```
-
-This ensures the packages land in the same environment as `wst` itself.
-
-**Status detection**: before installing, check importability of the key modules to show what's already installed:
+**Status detection**: check importability of key modules before installing:
 
 ```
 $ wst install --list
@@ -62,31 +56,54 @@ ocr       ✗ not installed   → wst install ocr
 topics    ✓ installed
 ```
 
-### 2 — Tauri app: Settings / Extras page
+**Auto-upgrade**: if `--upgrade` is passed (or will be triggered automatically by `wst` on startup when a newer version is detected), re-run the install with `--upgrade` on the pip call.
 
-Add a new **Settings** sidebar item (or a dedicated **Extras** section in an existing settings panel) that:
+### 2 — System dependencies for OCR
 
-1. On mount, calls `wst install --list --json` (a machine-readable variant) to fetch install status.
-2. Renders a card per extra with name, description, and an **Install** button for uninstalled ones.
-3. On button click, invokes `wst install <extra>` via Tauri's `Command` API and streams stdout to a log panel.
+`ocrmypdf` requires Ghostscript and Tesseract, which are not Python packages. `wst install ocr` will:
+
+1. **Check** if Ghostscript and Tesseract are available (`shutil.which("gs")`, `shutil.which("tesseract")`).
+2. If missing, **download and install** them using the platform-appropriate method:
+
+| Platform | Ghostscript | Tesseract |
+|----------|-------------|-----------|
+| macOS | Download `.pkg` from ghostscript.com + run installer, or `brew install ghostscript` if Homebrew is present | `brew install tesseract` or download `.pkg` |
+| Windows | Download NSIS `.exe` from ghostscript.com + silent install (`/S`), UB Mannheim Tesseract `.exe` + silent install | Same |
+| Linux | `sudo apt-get install ghostscript tesseract-ocr` | Same |
+
+The download-and-run approach (no Homebrew/apt required) is the baseline; package managers are used when detected.
+
+### 3 — Bundled (PyInstaller) case: side-car venv with embedded Python
+
+When `wst` is packaged as a PyInstaller one-file binary, `sys.executable` points to the frozen binary — `pip` is unavailable. Rather than requiring system Python, we bundle a Python interpreter alongside the app using **python-build-standalone**.
+
+**Flow**:
+
+1. The Tauri app ships a platform-specific `python-embed/` directory alongside the bundled `wst` binary, containing a standalone Python interpreter (from [python-build-standalone](https://github.com/indygreg/python-build-standalone) releases, ~30 MB compressed).
+2. On first `wst install`, if running frozen, the command detects `sys.frozen` and uses `python-embed/python` (or `python-embed/python.exe`) instead of `sys.executable`.
+3. A side-car venv is created at `~/.wst/extras/` using that embedded interpreter: `python-embed/python -m venv ~/.wst/extras/`.
+4. The extras are installed into the venv, and `~/.wst/extras/lib/pythonX.Y/site-packages` is added to `sys.path` at `wst` startup.
+
+The CI release workflow downloads the appropriate python-build-standalone artifact for each platform and places it in `app/src-tauri/resources/python-embed/` during the build.
+
+### 4 — Tauri app: Settings / Extras page
+
+Add a **Settings → Extras** section that:
+
+1. On mount, calls `wst install --list --json` to fetch install status.
+2. Renders a card per extra with name, description, install/upgrade button.
+3. On button click, invokes `wst install <extra>` via Tauri's `Command` API and streams stdout/stderr to a log panel.
 4. Shows a spinner while running, then ✓/✗ based on exit code.
 
-No new Tauri Rust code is needed — the Tauri app already shells out to the bundled `wst` binary for all operations.
+---
 
-### Bundled (PyInstaller) case
+## Decisions from review
 
-When `wst` is packaged as a PyInstaller one-file binary, `sys.executable` points to the frozen binary itself, not a Python interpreter — `pip` is not available.
-
-Two options for this case:
-
-| Option | Approach |
-|--------|----------|
-| **A — ship all extras in the bundle** | Add `ocr` and `topics` deps to the PyInstaller spec. Larger bundle (~400 MB → ~700 MB) but zero install friction |
-| **B — side-car venv** | On first `wst install`, create a side-car venv at `~/.wst/extras/` using the system Python, install there, and add it to `sys.path` at startup |
-
-Option A is simpler and eliminates the install flow entirely for Tauri app users. Option B keeps the bundle lean but requires a system Python.
-
-> See **Q1** below for input on which to pursue.
+| Question | Decision |
+|----------|----------|
+| Bundled case | Side-car venv at `~/.wst/extras/` using embedded Python (python-build-standalone) |
+| Upgrades | `--upgrade` flag supported; auto-upgrade path TBD in a follow-up |
+| System deps (OCR) | `wst install ocr` handles Ghostscript + Tesseract — downloads and runs installers, uses package managers when detected |
 
 ---
 
@@ -94,28 +111,22 @@ Option A is simpler and eliminates the install flow entirely for Tauri app users
 
 | Alternative | Why rejected |
 |-------------|-------------|
-| Document-only (better README) | Doesn't help Tauri app users who never see the README |
-| Auto-install on first use (transparent) | Installs without consent; surprising and potentially slow mid-command |
-| Separate installers per platform | Duplicates distribution work; extras are pip packages, not system packages |
-
----
-
-## Open Questions
-
-> **Q1**: For the Tauri/bundled case, do you prefer Option A (bundle all extras — simpler UX, larger download) or Option B (side-car venv — lean bundle, needs system Python)?
-
-> **Q2**: Should `wst install` support upgrading already-installed extras (`--upgrade` flag), or just initial install?
-
-> **Q3**: `ocrmypdf` has a system-level dependency (Ghostscript, Tesseract). Should `wst install ocr` also check for and guide the user through system dependency installation, or scope this to Python packages only?
+| Bundle all extras in PyInstaller | Bundle grows ~300 MB; user pays the cost even if they never use OCR/topics |
+| Require system Python for side-car | On Windows, Python is not installed by default; embedded Python removes this dependency |
+| Scope to Python packages only (no system deps) | OCR is unusable without Ghostscript/Tesseract; completing the install in one step is better UX |
+| Auto-install on first use (transparent) | Installs without consent and is potentially slow mid-command |
 
 ---
 
 ## Implementation Plan
 
 - [ ] Add `wst install <extra>` command to `src/wst/cli.py`
-- [ ] Add `--list` / `--list --json` output for status detection
-- [ ] Write tests for install status detection (mock importlib)
-- [ ] Add **Extras** section to the Tauri app settings UI
-- [ ] Wire up `wst install <extra>` via Tauri `Command` API with streaming output
-- [ ] Decide and implement bundled-case strategy (Q1)
-- [ ] Update help text / docs for `wst ocr` and `wst topics` to reference `wst install`
+- [ ] Add `--list` / `--list --json` and `--upgrade` flags
+- [ ] Implement system dependency installer (Ghostscript + Tesseract) with platform detection
+- [ ] Detect `sys.frozen` and route to embedded Python / side-car venv
+- [ ] Download python-build-standalone in CI and bundle in `app/src-tauri/resources/`
+- [ ] Add side-car venv creation + `sys.path` injection at `wst` startup
+- [ ] Write tests for install status detection and frozen-mode path
+- [ ] Add **Settings → Extras** section to Tauri app
+- [ ] Wire up streaming `wst install` output in the GUI
+- [ ] Update help text for `wst ocr` and `wst topics` to reference `wst install`
