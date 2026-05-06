@@ -114,3 +114,17 @@ jobs:
 
           git push origin HEAD:main
           git push origin "v$NEXT"
+
+      - name: Dispatch release-on-tag.yml
+        if: steps.bump.outputs.kind != 'none'
+        env:
+          NEXT: ${{ steps.version.outputs.next }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Pushes made with the default GITHUB_TOKEN do NOT trigger other
+          # workflows (GitHub anti-recursion rule). repository_dispatch is the
+          # documented exception, so we invoke release-on-tag.yml explicitly
+          # here. The tag itself is already pushed in the previous step.
+          jq -n --arg tag "v$NEXT" \
+            '{event_type:"release-tag",client_payload:{tag:$tag}}' \
+            | gh api "repos/${{ github.repository }}/dispatches" --input -
