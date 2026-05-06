@@ -1,4 +1,6 @@
+import json
 import shutil
+import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -948,10 +950,7 @@ def browse(
 
 @cli.command()
 @command_format_option()
-@click.argument(
-    "path",
-    type=click.Path(exists=True, path_type=Path),
-)
+@click.argument("target", type=str)
 @click.option(
     "--language",
     "-l",
@@ -971,8 +970,14 @@ def browse(
     help="Show detailed per-file processing logs",
 )
 @click.pass_context
-def ocr(ctx: click.Context, path: Path, language: str, force: bool, verbose: bool) -> None:
+def ocr(ctx: click.Context, target: str, language: str, force: bool, verbose: bool) -> None:
     """Run OCR on scanned PDFs to make them searchable.
+
+    \b
+    TARGET can be:
+      - a document ID (e.g. 42)
+      - a document title (e.g. "Vector Calculus")
+      - a file path or a directory of PDFs
 
     \b
     Adds an invisible text layer to scanned PDFs using ocrmypdf.
@@ -981,29 +986,72 @@ def ocr(ctx: click.Context, path: Path, language: str, force: bool, verbose: boo
 
     \b
     Examples:
+        wst ocr 42                      # OCR document by ID (used by GUI)
+        wst ocr "Vector Calculus"       # OCR document by title
         wst ocr scan.pdf                # OCR a single file
         wst ocr ~/scans/                # OCR all PDFs in a folder
-        wst ocr scan.pdf -l eng         # OCR in English
         wst ocr scan.pdf -l spa+eng     # OCR in Spanish and English
-        wst ocr scan.pdf --force        # Force OCR even if text exists
-        wst ocr scan.pdf --format json  # structured output
+        wst ocr 42 --format json        # structured output
     """
     from wst.ocr import ocr_files as run_ocr_batch
 
+    config: WstConfig = ctx.obj["config"]
     fmt: str = ctx.obj.get("format", "human")
 
-    if path.is_file():
-        if path.suffix.lower() != ".pdf":
+    files: list[Path] = []
+    db: Database | None = None
+    candidate = Path(target)
+    is_filesystem_target = candidate.exists()
+
+    if not is_filesystem_target:
+        # Treat as document identifier (ID or title).
+        db = Database(config.db_path)
+        try:
+            entry = _find_entry(db, target)
+            if entry is None:
+                if fmt == "human":
+                    click.echo(f"Document not found: {target}")
+                    raise SystemExit(1)
+                from wst.output import WstError
+
+                raise WstError("not_found", f"Document not found: {target}", exit_code=1)
+            doc_path = config.library_path / entry.file_path
+            if not doc_path.exists():
+                if fmt == "human":
+                    click.echo(f"File not found on disk: {doc_path}")
+                    raise SystemExit(1)
+                from wst.output import WstError
+
+                raise WstError(
+                    "not_found",
+                    f"File not found on disk: {doc_path}",
+                    exit_code=1,
+                )
+            if doc_path.suffix.lower() != ".pdf":
+                if fmt == "human":
+                    click.echo("Only PDF files can be OCR'd.")
+                    return
+                from wst.output import WstError
+
+                raise WstError("usage_error", "Only PDF files can be OCR'd.", exit_code=2)
+            files = [doc_path]
+        finally:
+            if db is not None:
+                db.close()
+    elif candidate.is_file():
+        if candidate.suffix.lower() != ".pdf":
             click.echo("Only PDF files can be OCR'd.")
             return
-        files = [path]
-    elif path.is_dir():
-        files = sorted(p for p in path.rglob("*") if p.is_file() and p.suffix.lower() == ".pdf")
+        files = [candidate]
+    elif candidate.is_dir():
+        files = sorted(
+            p for p in candidate.rglob("*") if p.is_file() and p.suffix.lower() == ".pdf"
+        )
         if not files:
             click.echo("No PDF files found in the given directory.")
             return
     else:
-        click.echo("Path must be a file or directory.")
+        click.echo("Target must be an ID, title, file, or directory.")
         return
 
     summary = run_ocr_batch(
@@ -2127,6 +2175,12 @@ def topics_build(ctx: click.Context, n_topics: int | None, yes: bool) -> None:
     config: WstConfig = ctx.obj["config"]
     fmt: str = ctx.obj.get("format", "human")
     db = Database(config.db_path)
+    is_ndjson = fmt == "ndjson"
+
+    def _emit_event(event: dict) -> None:
+        """Emit one NDJSON event to stdout, flushed."""
+        click.echo(json.dumps(event), nl=True)
+        sys.stdout.flush()
 
     try:
         from wst.topics import (
@@ -2163,12 +2217,16 @@ def topics_build(ctx: click.Context, n_topics: int | None, yes: bool) -> None:
             click.echo(f"\r          Backfilling content previews {current}/{total}...", nl=False)
 
         on_progress = _emit_backfill_progress if fmt == "human" else None
+        if is_ndjson:
+            _emit_event({"event": "phase", "name": "backfill_previews"})
         backfilled = backfill_content_previews(db, config.library_path, on_progress=on_progress)
         if fmt == "human" and backfilled:
             click.echo(f"\r          Backfilled content previews for {backfilled} documents.   ")
 
         if fmt == "human":
             click.echo("Step 1/4  Embedding documents and clustering...")
+        if is_ndjson:
+            _emit_event({"event": "phase", "name": "embedding"})
         # Pass existing vocab size as minimum so adding a few new documents
         # doesn't collapse the vocabulary to a smaller number of topics.
         min_topics = len(existing) if existing else None
@@ -2210,11 +2268,32 @@ def topics_build(ctx: click.Context, n_topics: int | None, yes: bool) -> None:
 
         if fmt == "human":
             click.echo("Step 2/4  Assigning topics to documents...")
+        if is_ndjson:
+            _emit_event(
+                {
+                    "event": "phase",
+                    "name": "assigning",
+                    "vocabulary": vocabulary,
+                }
+            )
 
-        assignments = assign_topics(db, ai, vocabulary)
+        def _on_doc(index: int, total: int, doc_id: int, topics: list[str]) -> None:
+            _emit_event(
+                {
+                    "event": "doc",
+                    "index": index,
+                    "total": total,
+                    "id": doc_id,
+                    "topics": topics,
+                }
+            )
+
+        assignments = assign_topics(db, ai, vocabulary, on_progress=_on_doc if is_ndjson else None)
 
         if fmt == "human":
             click.echo("Step 3/4  Saving to database...")
+        if is_ndjson:
+            _emit_event({"event": "phase", "name": "saving"})
 
         save_vocabulary(db, vocabulary, topic_to_subject)
 
@@ -2231,12 +2310,26 @@ def topics_build(ctx: click.Context, n_topics: int | None, yes: bool) -> None:
         # Backfill subjects from topic→subject mapping
         if fmt == "human":
             click.echo("Step 4/4  Backfilling subjects from topic clusters...")
+        if is_ndjson:
+            _emit_event({"event": "phase", "name": "subjects"})
         subject_updated = backfill_subjects(db, topic_to_subject)
 
         if fmt == "human":
             click.echo(f"\nDone. {len(assignments)} document(s) assigned topics.")
             click.echo(f"      {subject_updated} document(s) had their subject updated.")
             click.echo(f"Vocabulary ({len(vocabulary)}): {', '.join(vocabulary)}")
+            return
+
+        if is_ndjson:
+            _emit_event(
+                {
+                    "event": "done",
+                    "vocabulary": vocabulary,
+                    "subjects": topic_to_subject,
+                    "assigned_count": len(assignments),
+                    "subjects_updated": subject_updated,
+                }
+            )
             return
 
         from wst.output import render_ok

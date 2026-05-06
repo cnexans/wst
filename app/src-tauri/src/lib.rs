@@ -128,6 +128,7 @@ pub fn run() {
             commands::backup_to_icloud,
             commands::ingest_files,
             commands::cancel_ingest,
+            commands::build_topics,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Wan Shi Tong");

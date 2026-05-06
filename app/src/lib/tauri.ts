@@ -192,3 +192,57 @@ export function onIngestFile(cb: (e: IngestFileEvent) => void) {
 export function onIngestLog(cb: (line: string) => void) {
   return listen<string>("ingest:log", (event) => cb(event.payload));
 }
+
+// ---------------------------------------------------------------------------
+// RFC 0016 — OCR and topics from GUI
+// ---------------------------------------------------------------------------
+
+export interface OcrResult {
+  ok_count: number;
+  skipped_count: number;
+  failed_count: number;
+}
+
+export async function ocrDocument(
+  id: number,
+  opts: { force?: boolean; language?: string } = {}
+): Promise<OcrResult> {
+  const args = ["ocr", String(id), "--format", "json"];
+  if (opts.force) args.push("--force");
+  if (opts.language) args.push("--language", opts.language);
+  const raw = await invoke<string>("run_wst_command", { args });
+  const result = JSON.parse(raw);
+  return result.data as OcrResult;
+}
+
+export type TopicsEvent =
+  | { event: "phase"; name: string; vocabulary?: string[] }
+  | { event: "doc"; index: number; total: number; id: number; topics: string[] }
+  | {
+      event: "done";
+      vocabulary: string[];
+      assigned_count: number;
+      subjects_updated: number;
+    };
+
+export interface TopicsBuildResult {
+  vocabulary: string[];
+  assigned_count: number;
+  subjects_updated: number;
+}
+
+export async function buildTopics(
+  opts: { nTopics?: number } = {}
+): Promise<TopicsBuildResult> {
+  return invoke("build_topics", {
+    opts: { n_topics: opts.nTopics ?? null },
+  });
+}
+
+export function onTopicsEvent(cb: (e: TopicsEvent) => void) {
+  return listen<TopicsEvent>("topics:event", (event) => cb(event.payload));
+}
+
+export function onTopicsLog(cb: (line: string) => void) {
+  return listen<string>("topics:log", (event) => cb(event.payload));
+}
