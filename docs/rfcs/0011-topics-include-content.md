@@ -1,8 +1,14 @@
 # RFC 0011: Topic modeling should include document content
 
 **Issue**: #29
-**Status**: Draft — awaiting approval
+**Status**: Approved — awaiting approval label
 **Branch**: `rfc/29-topic-modeling-content`
+
+**Resolutions** (from #29 comments):
+- **Q1**: Ship with proposed defaults (1500-char cap, 600-char threshold). Validate empirically by re-running clustering on the current library after implementation.
+- **Q2**: Add `content_preview_source` column so the chosen ladder step is queryable per document.
+- **Q3**: Out of scope — skip missing files silently, no count line.
+- **Q4**: Use the TOC entries' page-index numbers to locate the introduction chapter (the first non-front-matter entry's page range). Fall back to the regex match only when the TOC has no usable page indices.
 
 ---
 
@@ -32,7 +38,7 @@ For each document, pick **the first option that yields ≥ N characters** of usa
 |---|---|---|
 | 1 | `summary` (already AI-generated) | Cheap, already in the DB. Used as-is when long enough. |
 | 2 | TOC extracted via `fitz.Document.get_toc()` | Free for most PDFs that ship a structured TOC. Flatten to one line per heading. |
-| 3 | Introductory chapter text | Detect via TOC entry whose title matches `^(introduc(tion|ción)\|prefac(e\|io)\|prólogo\|preface)`; extract that page range. |
+| 3 | Introductory chapter text | Use the TOC entries' page indices to locate the first body chapter. Concretely: skip front-matter entries (cover, copyright, acknowledgments, table of contents itself) and pull the page range of the first remaining entry. Only fall back to the regex `^(introduc(tion|ción)\|prefac(e\|io)\|prólogo\|preface)` if `get_toc()` returns no usable page indices. |
 | 4 | First ~5 pages of body text (current `extract_doc_info` behavior) | Last-resort fallback. We already read these pages at ingest, so this is free. |
 | 5 | Title + tags only | Only if the doc has no extractable text (e.g. scanned PDF without OCR). |
 
@@ -70,7 +76,7 @@ If `content_preview` is `NULL` (legacy rows that haven't been backfilled), fall 
 
 - For any row with `content_preview IS NULL` and a known `path`, run the selection ladder against the file and `UPDATE documents SET content_preview = ?`.
 - Print `Backfilling N/M …` so the user sees progress.
-- Skip silently if the file is missing.
+- Skip silently if the file is missing (out of scope per Q3).
 
 This avoids a separate `wst topics backfill` command — the work happens lazily on first build after upgrade.
 
@@ -88,25 +94,13 @@ This avoids a separate `wst topics backfill` command — the work happens lazily
 
 ---
 
-## Open Questions
-
-> **Q1**: What's the right target length for `content_preview`? Proposed **1500 chars** as the upper bound and **600 chars** as the threshold to stop walking the ladder. Too short and TOC entries get cut mid-list; too long and book TOCs dominate the embedding over title/tags. Should we tune empirically by re-running clustering on the user's current library and comparing topic coherence, or just ship the proposed defaults?
-
-> **Q2**: Should the selection ladder log *which* source it used per document (e.g. `[toc]`, `[first-pages]`)? Useful for debugging "why did this book end up in cluster X" but adds noise on a 1000-doc library. Proposal: store the source in a sibling column `content_preview_source` (TEXT) so it's queryable but not printed during build.
-
-> **Q3**: Backfill strategy for files that no longer exist on disk (the `path` column points to a missing file). Skip silently and leave `content_preview = NULL`, falling back to `summary` for those rows? Or surface a count at the end of build (`5 documents skipped — files missing`)? Proposal: count + summary line, no per-file noise.
-
-> **Q4**: Should the introduction-detection regex (step 3 of the ladder) also match `'capítulo 1'` / `'chapter 1'` as a fallback when no `introducción` heading exists? Some books skip the introduction. Risk: matches noise like "Chapter 1: Acknowledgments." Proposal: keep the regex narrow for now (introduction/prólogo/preface), revisit if Q1 tuning shows weak signal.
-
----
-
 ## Implementation Plan
 
-- [ ] Add migration: `ALTER TABLE documents ADD COLUMN content_preview TEXT` (and `content_preview_source TEXT` if Q2 = yes).
+- [ ] Migration: `ALTER TABLE documents ADD COLUMN content_preview TEXT` and `ALTER TABLE documents ADD COLUMN content_preview_source TEXT`.
 - [ ] Add `wst.document.build_content_preview(path, summary) -> tuple[str | None, str]` implementing the ladder. Returns `(preview, source)` where `source ∈ {summary, toc, intro, first-pages, title-only, none}`.
 - [ ] Hook `build_content_preview()` into the ingest pipeline so new documents get the field populated immediately.
 - [ ] Add lazy backfill at the start of `topics_build()` ([`cli.py:1795`](../../src/wst/cli.py)): for rows where `content_preview IS NULL` and `path` exists, compute and persist.
 - [ ] Update [`topics.py:191`](../../src/wst/topics.py) `build_vocabulary()` to read `content_preview` (with `summary[:300]` fallback for NULL).
 - [ ] Update the cluster-naming prompt at [`topics.py:22-46`](../../src/wst/topics.py) to include `content_preview` in the per-document context (subject to its own char budget).
-- [ ] Smoke-test on the user's existing library: re-run `wst topics build` and verify topic coherence improves on books that previously landed in noise clusters.
-- [ ] Document the new column and the ladder behavior in the topics section of `README.md`.
+- [ ] Smoke-test on the user's existing library: re-run `wst topics build` and verify topic coherence improves on books that previously landed in noise clusters (Q1 validation).
+- [ ] Document the new columns and the ladder behavior in the topics section of `README.md`.
