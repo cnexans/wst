@@ -98,17 +98,23 @@ jobs:
           echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
           echo "next=$NEXT"       >> "$GITHUB_OUTPUT"
 
-      - name: Bump pyproject.toml, commit, tag, push
+      - name: Bump pyproject.toml + tauri.conf.json, commit, tag, push
         if: steps.bump.outputs.kind != 'none'
         env:
           NEXT: ${{ steps.version.outputs.next }}
         run: |
           sed -i "s/^version = \".*\"/version = \"$NEXT\"/" pyproject.toml
 
+          # Keep tauri.conf.json in sync so Tauri bundle filenames
+          # (.dmg/.exe/.msi/.AppImage/.deb) carry the actual release version
+          # instead of a stale hardcoded one. The match is anchored to the
+          # 2-space indent of the top-level "version" field.
+          sed -i 's/^  "version": "[^"]*"/  "version": "'"$NEXT"'"/' app/src-tauri/tauri.conf.json
+
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add pyproject.toml
+          git add pyproject.toml app/src-tauri/tauri.conf.json
           git commit -m "chore: bump version to $NEXT"
           git tag "v$NEXT" -m "Release v$NEXT"
 

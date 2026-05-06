@@ -81,6 +81,7 @@ jobs:
             flat/*.tar.gz
             flat/*.dmg
             flat/*.exe
+            flat/*.msi
             flat/*.AppImage
             flat/*.deb
             flat/wst-macos
