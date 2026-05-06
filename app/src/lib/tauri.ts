@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import type { Document, LibraryStats } from "./types";
 
 export async function listDocuments(
@@ -74,10 +75,56 @@ export async function backupToIcloud(): Promise<string> {
   return invoke("backup_to_icloud");
 }
 
-export async function backupDocumentToIcloud(id: number): Promise<void> {
+export type BackupProvider = "icloud" | "gdrive" | "s3";
+
+export interface BackupProviderInfo {
+  name: BackupProvider;
+  configured: boolean;
+}
+
+export async function backupDocument(id: number, provider: BackupProvider): Promise<void> {
   await invoke<string>("run_wst_command", {
-    args: ["backup", "icloud", String(id), "--format", "json"],
+    args: ["backup", provider, String(id), "--format", "json"],
   });
+}
+
+/** @deprecated use backupDocument(id, "icloud") */
+export async function backupDocumentToIcloud(id: number): Promise<void> {
+  return backupDocument(id, "icloud");
+}
+
+export interface BackupAllResult {
+  provider: BackupProvider;
+  backed_up_files: number;
+}
+
+export async function backupAll(provider: BackupProvider): Promise<BackupAllResult> {
+  const raw = await invoke<string>("run_wst_command", {
+    args: ["backup", provider, "--all", "--format", "json"],
+  });
+  const result = JSON.parse(raw);
+  return result.data as BackupAllResult;
+}
+
+export async function listBackupProviders(): Promise<BackupProviderInfo[]> {
+  const raw = await invoke<string>("run_wst_command", {
+    args: ["backup", "providers", "--format", "json"],
+  });
+  const result = JSON.parse(raw);
+  return result.data.providers as BackupProviderInfo[];
+}
+
+export async function configureBackupProvider(
+  provider: "icloud" | "gdrive",
+  opts: { subfolder?: string; path?: string }
+): Promise<{ root: string }> {
+  const args = ["backup", provider, "--configure"];
+  if (opts.subfolder) args.push("--subfolder", opts.subfolder);
+  if (provider === "gdrive" && opts.path) args.push("--path", opts.path);
+  args.push("--format", "json");
+  const raw = await invoke<string>("run_wst_command", { args });
+  const result = JSON.parse(raw);
+  return { root: result.data.root };
 }
 
 export interface ExtraInfo {
@@ -99,4 +146,49 @@ export async function installExtra(name: string, upgrade = false): Promise<strin
   const args = ["install", name];
   if (upgrade) args.push("--upgrade");
   return invoke<string>("run_wst_command", { args });
+}
+
+// ---------------------------------------------------------------------------
+// RFC 0013 — ingest from GUI
+// ---------------------------------------------------------------------------
+
+export interface IngestFileEvent {
+  event: "file";
+  filename: string;
+  status: "ingested" | "skipped" | "failed";
+  reason: string;
+  dest_path: string;
+  notes: string[];
+}
+
+export interface IngestSummary {
+  processed: number;
+  ingested: number;
+  skipped: number;
+  failed: number;
+  cleaned_inbox_removed: number;
+}
+
+export interface IngestOpts {
+  force_ocr?: boolean;
+}
+
+export async function ingestFiles(
+  paths: string[],
+  opts: IngestOpts,
+  sessionId: string
+): Promise<IngestSummary> {
+  return invoke("ingest_files", { paths, opts, sessionId });
+}
+
+export async function cancelIngest(sessionId: string): Promise<void> {
+  return invoke("cancel_ingest", { sessionId });
+}
+
+export function onIngestFile(cb: (e: IngestFileEvent) => void) {
+  return listen<IngestFileEvent>("ingest:file", (event) => cb(event.payload));
+}
+
+export function onIngestLog(cb: (line: string) => void) {
+  return listen<string>("ingest:log", (event) => cb(event.payload));
 }

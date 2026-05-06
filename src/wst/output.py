@@ -87,6 +87,11 @@ def _render_payload(payload: dict[str, Any], *, fmt: str) -> None:
     if fmt == "json":
         click.echo(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
         return
+    if fmt == "ndjson":
+        # Single-line JSON for error/usage messages outside the streaming
+        # ingest path (which emits its own events directly).
+        click.echo(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+        return
     if fmt == "yaml":
         try:
             import yaml  # type: ignore
@@ -106,7 +111,7 @@ def _render_payload(payload: dict[str, Any], *, fmt: str) -> None:
     raise WstError(
         "usage_error",
         f"Unknown format: {fmt}",
-        details={"allowed": ["human", "md", "json", "yaml"]},
+        details={"allowed": ["human", "md", "json", "yaml", "ndjson"]},
         exit_code=2,
     )
 

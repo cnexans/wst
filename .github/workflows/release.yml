@@ -1,9 +1,9 @@
 name: Release
 
 # Reusable build/publish pipeline called by release-on-tag.yml. Builds the
-# Python wheel + sdist, the macOS .dmg (with PyInstaller CLI sidecar bundling
-# numpy/sklearn/scipy), and pushes to PyPI + Chocolatey. Each job uploads
-# its artifacts; release-on-tag.yml's github-release job collects and attaches.
+# Python wheel + sdist plus per-platform CLI binaries and GUI installers
+# (macOS .dmg, Windows .exe, Linux .AppImage + .deb). Each job uploads its
+# artifacts; release-on-tag.yml's github-release job collects and attaches.
 
 on:
   workflow_call:
@@ -81,6 +81,9 @@ jobs:
           cp dist/wst "app/src-tauri/binaries/wst-$TRIPLE"
           chmod +x "app/src-tauri/binaries/wst-$TRIPLE"
 
+      - name: Rename CLI for upload (platform-tagged)
+        run: cp dist/wst dist/wst-macos
+
       - name: Build Tauri app
         run: cd app && npm ci && npx tauri build
         env:
@@ -95,25 +98,174 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
+          name: macos-cli
+          path: dist/wst-macos
+
+      - uses: actions/upload-artifact@v4
+        with:
           name: macos-dmg
           path: ${{ steps.dmg.outputs.path }}
 
-  chocolatey:
+  windows-installer:
     needs: test
     runs-on: windows-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with:
           ref: v${{ inputs.version }}
-      - name: Set version in nuspec
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build standalone wst CLI binary
         shell: pwsh
         run: |
-          $version = "${{ inputs.version }}"
-          (Get-Content packaging/chocolatey/wst.nuspec) -replace '<version>.*</version>', "<version>$version</version>" | Set-Content packaging/chocolatey/wst.nuspec
-      - name: Pack and push
+          python -m venv .venv
+          .venv\Scripts\pip install -e . numpy scikit-learn scipy pyinstaller
+          .venv\Scripts\pyinstaller --onefile --name wst `
+            --collect-all wst `
+            --collect-all numpy `
+            --collect-all sklearn `
+            --collect-all scipy `
+            pyinstaller_entry.py
+          $triple = (rustc -vV | Select-String "^host:").Line.Split(" ")[1]
+          New-Item -ItemType Directory -Force app\src-tauri\binaries | Out-Null
+          Copy-Item dist\wst.exe "app\src-tauri\binaries\wst-$triple.exe"
+
+      - name: Build Tauri app
+        shell: pwsh
+        run: cd app; npm ci; npx tauri build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ""
+
+      - name: Locate Windows installers (.exe + .msi)
+        id: bundles
         shell: pwsh
         run: |
-          cd packaging/chocolatey
-          choco pack
-          choco push --source https://push.chocolatey.org/ --api-key ${{ secrets.CHOCOLATEY_API_KEY }} --verbose
+          $exe = Get-ChildItem app\src-tauri\target\release\bundle\nsis\*.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($exe) { "exe=$($exe.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append }
+          $msi = Get-ChildItem app\src-tauri\target\release\bundle\msi\*.msi -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($msi) {
+            "msi=$($msi.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          } else {
+            Write-Host "::warning::No .msi produced — Tauri only emitted NSIS."
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-cli
+          path: dist/wst.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-exe
+          path: ${{ steps.bundles.outputs.exe }}
+
+      - uses: actions/upload-artifact@v4
+        if: steps.bundles.outputs.msi != ''
+        with:
+          name: windows-msi
+          path: ${{ steps.bundles.outputs.msi }}
+
+  linux-x86_64:
+    needs: test
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v${{ inputs.version }}
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
+            librsvg2-dev patchelf libssl-dev
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build standalone wst CLI binary
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install -e . numpy scikit-learn scipy pyinstaller
+          .venv/bin/pyinstaller --onefile --name wst \
+            --collect-all wst \
+            --collect-all numpy \
+            --collect-all sklearn \
+            --collect-all scipy \
+            pyinstaller_entry.py
+          mkdir -p app/src-tauri/binaries
+          TRIPLE=$(rustc -vV | grep '^host:' | cut -d' ' -f2)
+          cp dist/wst "app/src-tauri/binaries/wst-$TRIPLE"
+          chmod +x "app/src-tauri/binaries/wst-$TRIPLE"
+
+      - name: Rename CLI for upload (platform-tagged)
+        run: cp dist/wst dist/wst-linux-x86_64
+
+      - name: Build Tauri app
+        run: cd app && npm ci && npx tauri build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ""
+
+      - name: Locate .AppImage and .deb
+        id: linux-artifacts
+        run: |
+          IMG=$(ls app/src-tauri/target/release/bundle/appimage/*.AppImage | head -1)
+          DEB=$(ls app/src-tauri/target/release/bundle/deb/*.deb | head -1)
+          echo "appimage=$IMG" >> "$GITHUB_OUTPUT"
+          echo "deb=$DEB" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-cli
+          path: dist/wst-linux-x86_64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x86_64-appimage
+          path: ${{ steps.linux-artifacts.outputs.appimage }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x86_64-deb
+          path: ${{ steps.linux-artifacts.outputs.deb }}
+
+  # Chocolatey publish disabled while wst/0.1.1 is still in chocolatey.org's
+  # moderation queue ("waiting for review"). chocolatey.org's front-end blocks
+  # any push of new versions for moderated packages with a generic IIS 403
+  # ("Access is denied"), even though `verifykey` returns 200 and the API key
+  # is otherwise valid. Re-enable this job once 0.1.1 is approved.
+  #
+  # chocolatey:
+  #   needs: test
+  #   runs-on: windows-latest
+  #   continue-on-error: true
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #       with:
+  #         ref: v${{ inputs.version }}
+  #     - name: Set version in nuspec
+  #       shell: pwsh
+  #       run: |
+  #         $version = "${{ inputs.version }}"
+  #         (Get-Content packaging/chocolatey/wst.nuspec) -replace '<version>.*</version>', "<version>$version</version>" | Set-Content packaging/chocolatey/wst.nuspec
+  #     - name: Pack and push
+  #       shell: pwsh
+  #       run: |
+  #         cd packaging/chocolatey
+  #         choco pack
+  #         choco push --source https://push.chocolatey.org/ --api-key ${{ secrets.CHOCOLATEY_API_KEY }} --verbose

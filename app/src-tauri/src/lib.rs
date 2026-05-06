@@ -3,10 +3,12 @@ mod covers;
 mod db;
 mod models;
 
-use commands::{CoverState, DbState, LibraryPath};
+use commands::{CoverState, DbState, IngestSessions, LibraryPath};
 use covers::CoverManager;
 use db::Db;
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 fn get_library_path() -> PathBuf {
     let home = dirs::home_dir().expect("could not find home directory");
@@ -80,6 +82,7 @@ pub fn run() {
     let covers_dir = library_path.join(".covers");
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|_app| {
             install_cli_to_path();
             Ok(())
@@ -87,6 +90,7 @@ pub fn run() {
         .manage(DbState(std::sync::Mutex::new(db)))
         .manage(CoverState(cover_manager))
         .manage(LibraryPath(library_path))
+        .manage(IngestSessions(Mutex::new(HashMap::new())))
         .register_uri_scheme_protocol("covers", move |_ctx, request| {
             let path = request.uri().path().trim_start_matches('/');
             let file_path = covers_dir.join(path);
@@ -122,6 +126,8 @@ pub fn run() {
             commands::reveal_in_finder,
             commands::run_wst_command,
             commands::backup_to_icloud,
+            commands::ingest_files,
+            commands::cancel_ingest,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Wan Shi Tong");

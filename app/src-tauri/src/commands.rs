@@ -1,5 +1,8 @@
-use std::process::Command;
-use tauri::State;
+use std::collections::HashMap;
+use std::io::{BufRead, BufReader};
+use std::process::{Child, Command, Stdio};
+use std::sync::Mutex;
+use tauri::{Emitter, State, Window};
 
 use crate::covers::CoverManager;
 use crate::db::Db;
@@ -8,6 +11,10 @@ use crate::models::{Document, LibraryStats};
 pub struct DbState(pub std::sync::Mutex<Db>);
 pub struct CoverState(pub CoverManager);
 pub struct LibraryPath(pub std::path::PathBuf);
+
+/// Active `wst ingest --format ndjson` subprocesses, keyed by session id so
+/// the GUI can cancel a running ingest. RFC 0013.
+pub struct IngestSessions(pub Mutex<HashMap<String, Child>>);
 
 #[tauri::command]
 pub fn list_documents(
@@ -127,6 +134,150 @@ pub fn which_wst() -> String {
     "wst".to_string()
 }
 
+
+// ---------------------------------------------------------------------------
+// RFC 0013 — ingest from GUI via `wst ingest --format ndjson`
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Deserialize, Default)]
+pub struct IngestOpts {
+    /// When true, pass `--ocr` to force OCR on every PDF. When false (default),
+    /// the CLI auto-detects scanned PDFs and OCRs them only when ocrmypdf is
+    /// installed (per Q4).
+    #[serde(default)]
+    pub force_ocr: bool,
+}
+
+#[derive(serde::Serialize, Default)]
+pub struct IngestSummary {
+    pub processed: u64,
+    pub ingested: u64,
+    pub skipped: u64,
+    pub failed: u64,
+    pub cleaned_inbox_removed: u64,
+}
+
+#[tauri::command]
+pub async fn ingest_files(
+    paths: Vec<String>,
+    opts: Option<IngestOpts>,
+    session_id: String,
+    window: Window,
+    sessions: State<'_, IngestSessions>,
+) -> Result<IngestSummary, String> {
+    let opts = opts.unwrap_or_default();
+    let wst_path = which_wst();
+
+    let mut args: Vec<String> = vec!["ingest".into(), "--format".into(), "ndjson".into()];
+    if opts.force_ocr {
+        args.push("--ocr".into());
+    }
+    args.extend(paths);
+
+    let mut child = Command::new(&wst_path)
+        .args(&args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to spawn wst: {e}"))?;
+
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "missing stdout from wst".to_string())?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "missing stderr from wst".to_string())?;
+
+    // Park the Child handle in the session map so cancel_ingest can kill it.
+    {
+        let mut map = sessions.0.lock().map_err(|e| e.to_string())?;
+        map.insert(session_id.clone(), child);
+    }
+
+    // Forward stderr lines as ingest:log events; drop the join handle (best-effort).
+    let win_err = window.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let reader = BufReader::new(stderr);
+        for line in reader.lines().map_while(Result::ok) {
+            let _ = win_err.emit("ingest:log", line);
+        }
+    });
+
+    // Parse stdout NDJSON line-by-line, emit ingest:file events as they land,
+    // capture the final summary event.
+    let win = window.clone();
+    let parse_handle = tauri::async_runtime::spawn_blocking(
+        move || -> Result<IngestSummary, String> {
+            let reader = BufReader::new(stdout);
+            let mut summary: Option<IngestSummary> = None;
+            for line in reader.lines().map_while(Result::ok) {
+                let value: serde_json::Value = match serde_json::from_str(&line) {
+                    Ok(v) => v,
+                    Err(_) => continue, // skip non-JSON noise (shouldn't happen, but harmless)
+                };
+                match value.get("event").and_then(|v| v.as_str()) {
+                    Some("file") => {
+                        let _ = win.emit("ingest:file", value);
+                    }
+                    Some("summary") => {
+                        summary = Some(IngestSummary {
+                            processed: value
+                                .get("processed")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0),
+                            ingested: value
+                                .get("ingested")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0),
+                            skipped: value
+                                .get("skipped")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0),
+                            failed: value
+                                .get("failed")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0),
+                            cleaned_inbox_removed: value
+                                .get("cleaned_inbox_removed")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0),
+                        });
+                    }
+                    _ => {}
+                }
+            }
+            // Cancellation closes the pipe before a summary arrives — return zeros.
+            Ok(summary.unwrap_or_default())
+        },
+    );
+
+    let summary = parse_handle.await.map_err(|e| format!("parse task failed: {e}"))??;
+
+    // Reap the child if it's still in the session map (i.e., ingest finished
+    // naturally rather than via cancel_ingest).
+    if let Ok(mut map) = sessions.0.lock() {
+        if let Some(mut child) = map.remove(&session_id) {
+            let _ = child.wait();
+        }
+    }
+
+    Ok(summary)
+}
+
+#[tauri::command]
+pub fn cancel_ingest(
+    session_id: String,
+    sessions: State<'_, IngestSessions>,
+) -> Result<(), String> {
+    let mut map = sessions.0.lock().map_err(|e| e.to_string())?;
+    if let Some(mut child) = map.remove(&session_id) {
+        child.kill().map_err(|e| format!("could not kill ingest session: {e}"))?;
+        let _ = child.wait();
+    }
+    Ok(())
+}
 
 #[tauri::command]
 pub fn backup_to_icloud(library_path: State<LibraryPath>) -> Result<String, String> {

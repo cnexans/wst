@@ -161,6 +161,11 @@ def require_ocr_dependencies() -> bool:
     return True
 
 
+def ocr_available() -> bool:
+    """Silent check — True iff ocrmypdf and tesseract are both available."""
+    return _check_ocr_dependencies() is None
+
+
 def ocr_files(
     files: list[Path],
     language: str = "spa",

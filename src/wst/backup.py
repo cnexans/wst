@@ -4,7 +4,6 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 
 import click
-from InquirerPy import inquirer
 
 from wst.db import Database
 from wst.models import LibraryEntry
@@ -26,6 +25,40 @@ def _detect_icloud_base() -> Path | None:
         if p.exists():
             return p
     return None
+
+
+def _detect_gdrive_bases() -> list[Path]:
+    """Detect Google Drive sync folder roots. Returns all candidates found.
+
+    macOS modern Drive for Desktop uses ~/Library/CloudStorage/GoogleDrive-<email>/My Drive
+    and may have multiple entries when several accounts are signed in. Older versions
+    used ~/Google Drive/My Drive. Linux/Windows fall back to common conventions.
+    """
+    system = platform.system()
+    candidates: list[Path] = []
+    home = Path.home()
+
+    if system == "Darwin":
+        cloud_storage = home / "Library" / "CloudStorage"
+        if cloud_storage.exists():
+            for entry in sorted(cloud_storage.glob("GoogleDrive-*")):
+                my_drive = entry / "My Drive"
+                if my_drive.exists():
+                    candidates.append(my_drive)
+        legacy = home / "Google Drive" / "My Drive"
+        if legacy.exists():
+            candidates.append(legacy)
+    elif system == "Windows":
+        for p in (home / "Google Drive" / "My Drive", Path("G:/My Drive")):
+            if p.exists():
+                candidates.append(p)
+    else:
+        # Linux: rclone, insync, google-drive-ocamlfuse all default near ~/GoogleDrive
+        for p in (home / "GoogleDrive", home / "Google Drive"):
+            if p.exists():
+                candidates.append(p)
+
+    return candidates
 
 
 class BackupProvider(ABC):
@@ -73,6 +106,8 @@ class ICloudProvider(BackupProvider):
             else:
                 click.echo(f"iCloud Drive is not supported on {system}.")
             return
+
+        from InquirerPy import inquirer
 
         subfolder = (
             inquirer.text(
@@ -181,6 +216,8 @@ class S3Provider(BackupProvider):
         click.echo("\n--- S3 Backup Configuration ---")
         click.echo("Enter your S3 bucket credentials.")
         click.echo("These are stored locally in ~/wst/config.json\n")
+
+        from InquirerPy import inquirer
 
         bucket = inquirer.text(message="Bucket name:").execute().strip()
         if not bucket:
@@ -300,8 +337,121 @@ class S3Provider(BackupProvider):
         return count
 
 
+class GoogleDriveProvider(BackupProvider):
+    name = "gdrive"
+
+    def __init__(self, subfolder: str = "wst", root: Path | None = None):
+        self.subfolder = subfolder
+        if root is not None:
+            self.gdrive_base: Path | None = root
+        else:
+            from wst.config import get_gdrive_config
+
+            cfg = get_gdrive_config()
+            if cfg and cfg.get("root"):
+                self.gdrive_base = Path(cfg["root"])
+                self.subfolder = cfg.get("subfolder", subfolder)
+            else:
+                bases = _detect_gdrive_bases()
+                # Q1: auto-pick the first match
+                self.gdrive_base = bases[0] if bases else None
+        self.dest_root = self.gdrive_base / self.subfolder if self.gdrive_base else Path()
+
+    def is_configured(self) -> bool:
+        return self.gdrive_base is not None and self.gdrive_base.exists()
+
+    def configure(self) -> None:
+        from InquirerPy import inquirer
+
+        from wst.config import save_gdrive_config
+
+        bases = _detect_gdrive_bases()
+
+        if not bases:
+            click.echo("Google Drive sync folder not found.")
+            system = platform.system()
+            if system == "Darwin":
+                click.echo(
+                    "Install Google Drive for Desktop, sign in, "
+                    "and ensure 'My Drive' is set to stream or mirror."
+                )
+            elif system == "Windows":
+                click.echo("Install Google Drive for Desktop and sign in.")
+            else:
+                click.echo(
+                    "On Linux, install rclone/insync/google-drive-ocamlfuse and mount your Drive."
+                )
+            manual = (
+                inquirer.text(
+                    message=("Manual path to your Google Drive root (leave empty to skip):"),
+                    default="",
+                )
+                .execute()
+                .strip()
+            )
+            if not manual:
+                return
+            chosen = Path(manual).expanduser()
+            if not chosen.exists():
+                click.echo(f"Path not found: {chosen}")
+                return
+        elif len(bases) == 1:
+            chosen = bases[0]
+        else:
+            choice = inquirer.select(
+                message="Multiple Google Drive accounts detected — choose one:",
+                choices=[str(b) for b in bases],
+            ).execute()
+            chosen = Path(choice)
+
+        subfolder = (
+            inquirer.text(
+                message="Subfolder name in Google Drive:",
+                default=self.subfolder,
+            )
+            .execute()
+            .strip()
+        )
+
+        self.subfolder = subfolder or "wst"
+        self.gdrive_base = chosen
+        self.dest_root = self.gdrive_base / self.subfolder
+        self.dest_root.mkdir(parents=True, exist_ok=True)
+        save_gdrive_config(root=str(self.gdrive_base), subfolder=self.subfolder)
+        click.echo(f"Configured: {self.dest_root}")
+
+    def backup_file(self, source: Path, dest_relative: str) -> None:
+        dest = self.dest_root / dest_relative
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(str(source), str(dest))
+
+    def backup_all(self, library_path: Path, *, emit: bool = True) -> int:
+        from wst.document import is_supported
+
+        count = 0
+        for f in sorted(p for p in library_path.rglob("*") if p.is_file() and is_supported(p)):
+            relative = str(f.relative_to(library_path))
+            if emit:
+                click.echo(f"  {relative}... ", nl=False)
+            self.backup_file(f, relative)
+            if emit:
+                click.echo("done")
+            count += 1
+
+        db_path = library_path / "wst.db"
+        if db_path.exists():
+            if emit:
+                click.echo("  wst.db... ", nl=False)
+            self.backup_file(db_path, "wst.db")
+            if emit:
+                click.echo("done")
+
+        return count
+
+
 PROVIDERS: dict[str, type[BackupProvider]] = {
     "icloud": ICloudProvider,
+    "gdrive": GoogleDriveProvider,
     "s3": S3Provider,
 }
 
@@ -326,6 +476,8 @@ def run_backup_interactive(
     library_path: Path,
 ) -> None:
     """Interactive backup flow: choose all or select a file."""
+    from InquirerPy import inquirer
+
     if not provider.is_configured():
         click.echo(f"Provider '{provider.name}' is not configured.")
         provider.configure()

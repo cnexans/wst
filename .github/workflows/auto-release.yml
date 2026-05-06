@@ -2,8 +2,13 @@ name: Auto Release
 
 # Fires on every push to main. Inspects the new commits via Conventional Commits
 # and, if any of them warrant a release, bumps pyproject.toml, commits the bump
-# with [skip ci], and pushes a vX.Y.Z tag. The tag push triggers
+# as github-actions[bot], and pushes a vX.Y.Z tag. The tag push triggers
 # release-on-tag.yml, which builds and publishes artifacts.
+#
+# Recursion is prevented by the actor + subject guard on the bump job (see below) —
+# we deliberately do NOT use GitHub's CI-skip directive token, because it can leak
+# from prose in unrelated commit messages and silently disable all workflows.
+# See README's Releasing section.
 #
 # Bump rules:
 #   feat:  / feat!: / BREAKING CHANGE   -> minor
@@ -25,9 +30,9 @@ jobs:
   bump:
     runs-on: ubuntu-latest
 
-    # Recursion guard #1: skip the bump commit this workflow itself produced.
-    # [skip ci] in the commit message is the primary defense; this is belt-and-suspenders
-    # in case [skip ci] semantics change.
+    # Recursion guard: skip the bump commit this workflow itself produced.
+    # The actor + subject prefix combination uniquely identifies our own bump
+    # commit and is mechanically safe (no reliance on commit-message tokens).
     if: |
       !(github.actor == 'github-actions[bot]'
         && startsWith(github.event.head_commit.message, 'chore: bump version to'))
@@ -51,8 +56,11 @@ jobs:
             exit 0
           fi
 
-          # First-line of every commit subject in the push.
-          MESSAGES=$(git log --format='%s%n%b%n---' "$BEFORE..$AFTER")
+          # First-line of every commit subject in the push, with squash-merge
+          # bullets ("* ") stripped so Conventional-Commits prefixes anchor to
+          # the start of the line.
+          MESSAGES=$(git log --format='%s%n%b%n---' "$BEFORE..$AFTER" \
+            | sed 's/^[[:space:]]*\* //')
           echo "Inspecting commits in $BEFORE..$AFTER"
           echo "$MESSAGES"
 
@@ -90,19 +98,39 @@ jobs:
           echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
           echo "next=$NEXT"       >> "$GITHUB_OUTPUT"
 
-      - name: Bump pyproject.toml, commit, tag, push
+      - name: Bump pyproject.toml + tauri.conf.json, commit, tag, push
         if: steps.bump.outputs.kind != 'none'
         env:
           NEXT: ${{ steps.version.outputs.next }}
         run: |
           sed -i "s/^version = \".*\"/version = \"$NEXT\"/" pyproject.toml
 
+          # Keep tauri.conf.json in sync so Tauri bundle filenames
+          # (.dmg/.exe/.msi/.AppImage/.deb) carry the actual release version
+          # instead of a stale hardcoded one. The match is anchored to the
+          # 2-space indent of the top-level "version" field.
+          sed -i 's/^  "version": "[^"]*"/  "version": "'"$NEXT"'"/' app/src-tauri/tauri.conf.json
+
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add pyproject.toml
-          git commit -m "chore: bump version to $NEXT [skip ci]"
+          git add pyproject.toml app/src-tauri/tauri.conf.json
+          git commit -m "chore: bump version to $NEXT"
           git tag "v$NEXT" -m "Release v$NEXT"
 
           git push origin HEAD:main
           git push origin "v$NEXT"
+
+      - name: Dispatch release-on-tag.yml
+        if: steps.bump.outputs.kind != 'none'
+        env:
+          NEXT: ${{ steps.version.outputs.next }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Pushes made with the default GITHUB_TOKEN do NOT trigger other
+          # workflows (GitHub anti-recursion rule). repository_dispatch is the
+          # documented exception, so we invoke release-on-tag.yml explicitly
+          # here. The tag itself is already pushed in the previous step.
+          jq -n --arg tag "v$NEXT" \
+            '{event_type:"release-tag",client_payload:{tag:$tag}}' \
+            | gh api "repos/${{ github.repository }}/dispatches" --input -

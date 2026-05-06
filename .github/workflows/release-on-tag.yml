@@ -1,7 +1,16 @@
 # Push an annotated tag 'vX.Y.Z' (matching pyproject.toml) to trigger:
-# tests, PyPI publish, .dmg build, optional Chocolatey push, and a GitHub
-# Release with all artifacts attached. Tags are normally pushed by
-# auto-release.yml; manual tag pushes work as an emergency-hotfix path.
+# tests, PyPI publish, .dmg + .exe + .AppImage + .deb builds, optional
+# Chocolatey push, and a GitHub Release with all artifacts attached.
+#
+# Triggers:
+# - repository_dispatch (event_type=release-tag, client_payload.tag=vX.Y.Z)
+#   fired by auto-release.yml after the bump+tag push. This is the normal
+#   path: GitHub Actions does NOT run other workflows on push events made
+#   with the default GITHUB_TOKEN, so we explicitly dispatch from
+#   auto-release.yml. repository_dispatch is the documented exception.
+# - push:tags as an emergency-hotfix path (manual `git push origin vX.Y.Z`
+#   from a workstation, where the user's credentials are NOT GITHUB_TOKEN
+#   and so workflow_runs are normally created).
 
 name: Release on tag
 
@@ -9,6 +18,8 @@ on:
   push:
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+"
+  repository_dispatch:
+    types: [release-tag]
 
 permissions:
   contents: write
@@ -17,13 +28,21 @@ jobs:
   prep:
     runs-on: ubuntu-latest
     outputs:
+      tag: ${{ steps.meta.outputs.tag }}
       semver: ${{ steps.meta.outputs.semver }}
     steps:
-      - name: Strip v prefix for reusable workflow
+      - name: Resolve tag and semver
         id: meta
         run: |
-          TAG="${GITHUB_REF_NAME}"
+          # repository_dispatch carries the tag name in client_payload.tag;
+          # push:tags carries it in GITHUB_REF_NAME.
+          if [ -n "${{ github.event.client_payload.tag }}" ]; then
+            TAG="${{ github.event.client_payload.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
           SEMVER="${TAG#v}"
+          echo "tag=$TAG"     >> "$GITHUB_OUTPUT"
           echo "semver=$SEMVER" >> "$GITHUB_OUTPUT"
 
   publish:
@@ -34,27 +53,37 @@ jobs:
     secrets: inherit
 
   github-release:
-    needs: publish
+    needs: [prep, publish]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/download-artifact@v4
         with:
-          name: python-dist
-          path: dist/
+          ref: ${{ needs.prep.outputs.tag }}
 
-      - uses: actions/download-artifact@v4
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
         with:
-          name: macos-dmg
-          path: dmg/
+          path: release-artifacts
+
+      - name: Flatten artifact directories
+        run: |
+          mkdir -p flat
+          find release-artifacts -type f -exec cp {} flat/ \;
+          ls -la flat/
 
       - name: Create GitHub release with artifacts
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ needs.prep.outputs.tag }}
           generate_release_notes: true
           files: |
-            dist/*.whl
-            dist/*.tar.gz
-            dmg/*.dmg
+            flat/*.whl
+            flat/*.tar.gz
+            flat/*.dmg
+            flat/*.exe
+            flat/*.msi
+            flat/*.AppImage
+            flat/*.deb
+            flat/wst-macos
+            flat/wst-linux-x86_64
+            flat/wst.exe

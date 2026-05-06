@@ -25,7 +25,7 @@ Named after **Wan Shi Tong**, the ancient spirit who collected every piece of kn
 - **SQLite search index**: Full-text search across title, author, tags, subject, and summary via FTS5
 - **Coverage stats**: See metadata completeness across your library, broken down by document type and field
 - **Interactive browser**: Fuzzy-search your library, view and edit metadata interactively
-- **Cloud backup**: Backup files to iCloud Drive or S3, with extensible provider system
+- **Cloud backup**: Backup files to iCloud Drive, Google Drive, or S3, with extensible provider system
 - **Extensible backends**: Abstract layers for AI (Claude CLI, future API/SDK) and storage (local filesystem, S3)
 
 ## Installation
@@ -53,6 +53,10 @@ xattr -cr /Applications/Wan\ Shi\ Tong.app
 ```
 
 Then open the app normally.
+
+#### Ingestar desde la GUI
+
+The toolbar has an **Ingestar** button that opens a native picker for files or a folder. The app spawns the bundled CLI behind the scenes (`wst ingest --format ndjson`) and shows per-file progress as documents are processed. Scanned PDFs are OCR'd automatically when `ocrmypdf` is installed; if it's not, the row gets a "OCR tools not installed" note and the document is ingested with whatever text and metadata are available.
 
 ### Homebrew (macOS/Linux)
 
@@ -123,7 +127,10 @@ wst browse
 
 # Backup
 wst backup icloud
+wst backup gdrive          # syncs into your local Google Drive folder
+wst backup gdrive --all    # back up the entire library (used by the GUI)
 wst backup s3
+wst backup providers --format json  # list providers and configured state
 ```
 
 ## Commands
@@ -139,7 +146,7 @@ wst backup s3
 | `wst stats` | Show metadata coverage statistics. Options: `--type` |
 | `wst browse` | Interactive TUI for browsing and editing documents |
 | `wst ocr <id-or-path>` | Run OCR on scanned PDFs |
-| `wst backup [provider]` | Backup files to iCloud or S3 |
+| `wst backup [provider]` | Backup files to iCloud, Google Drive, or S3. Providers: `icloud`, `gdrive`, `s3`. Use `--all` for full-library backup. The GUI exposes the same providers via the **Backup pane** in the sidebar. |
 | `wst topics build` | Cluster the corpus into a topic vocabulary and assign topics to every document |
 
 ## How Ingestion Works
@@ -206,7 +213,11 @@ Releases are automatic. Use [Conventional Commits](https://www.conventionalcommi
 | `fix:` / `perf:` | patch bump (e.g. `0.10.3` → `0.10.4`) |
 | `refactor:` / `chore:` / `docs:` / `rfc:` / `test:` / `style:` / `ci:` | no release |
 
-On a qualifying merge, `auto-release.yml` bumps `pyproject.toml`, commits the bump as `github-actions[bot]` with `[skip ci]`, and pushes a `vX.Y.Z` tag. The tag push then triggers `release-on-tag.yml`, which runs tests, builds the macOS `.dmg`, publishes to PyPI, optionally pushes to Chocolatey, and attaches all artifacts to a GitHub Release.
+On a qualifying merge, `auto-release.yml` bumps `pyproject.toml`, commits the bump as `github-actions[bot]`, and pushes a `vX.Y.Z` tag. Recursion is prevented by an actor + subject guard on the bump job, not by the GitHub CI-skip directive. After pushing the tag, `auto-release.yml` invokes `release-on-tag.yml` via `repository_dispatch` — pushes made with the default `GITHUB_TOKEN` do not trigger workflow runs, so we call the dispatch API explicitly. `release-on-tag.yml` then runs tests, builds the macOS `.dmg` / Windows `.exe` / Linux `.AppImage` / `.deb`, publishes to PyPI, optionally pushes to Chocolatey, and attaches all artifacts to a GitHub Release. Manually pushing a tag from a workstation also works as an emergency-hotfix path because that push is *not* made with `GITHUB_TOKEN`.
+
+> **Heads-up:** never include the literal CI-skip token (open bracket, `skip` `ci`, close bracket — described, not spelled, here so this README itself doesn't trip it) in commit messages or PR descriptions for changes that should run CI. GitHub honors that token on **any line** of a commit message and silently skips every workflow. If you need to refer to it in prose, hyphenate it (`[skip-ci]`) or wrap it in inline code that the squash-merge will preserve as backticks.
+>
+> The `Skip-CI Guard` workflow (RFC 0012) enforces this on every PR targeting `main` — a PR whose title or body contains a literal CI-skip directive will fail the check and cannot be merged until the token is escaped.
 
 Pre-1.0: `BREAKING CHANGE:` bumps minor (no major bumps until `1.0.0`).
 

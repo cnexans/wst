@@ -1,6 +1,7 @@
 import hashlib
 import time
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -20,6 +21,8 @@ class IngestResult:
     status: str  # "ingested", "skipped", "failed"
     reason: str = ""
     dest_path: str = ""
+    # Informational per-file events (e.g. "OCR auto-applied").
+    notes: list[str] = field(default_factory=list)
 
 
 def compute_file_hash(path: Path) -> str:
@@ -113,6 +116,36 @@ def ingest_file(
             click.echo(f"  Error reading file: {e}")
         return IngestResult(path.name, "failed", f"Error reading file: {e}")
 
+    # RFC 0013 Q4 — auto-detect OCR for scanned PDFs. If ocrmypdf is available,
+    # OCR in-place and re-extract; otherwise emit an informational note and
+    # proceed with whatever text exists.
+    notes: list[str] = []
+    if path.suffix.lower() == ".pdf":
+        from wst.ocr import needs_ocr, ocr_available, run_ocr
+
+        if needs_ocr(path):
+            if ocr_available():
+                ocr_result = run_ocr(path, language="spa")
+                if ocr_result.status == "processed":
+                    try:
+                        existing_meta, text_sample, page_count = extract_doc_info(path)
+                        notes.append("OCR auto-applied")
+                        if verbose:
+                            click.echo("  OCR auto-applied (scanned PDF)")
+                    except Exception:
+                        notes.append("OCR auto-applied but re-extraction failed")
+                elif ocr_result.status == "failed":
+                    notes.append(f"OCR failed: {ocr_result.reason}")
+                    if verbose:
+                        click.echo(f"  OCR failed: {ocr_result.reason}")
+            else:
+                notes.append(
+                    "file appears scanned but OCR tools are not installed; "
+                    "using available text and metadata"
+                )
+                if verbose:
+                    click.echo("  OCR tools not installed; using available text + metadata")
+
     # Generate metadata via AI
     if verbose:
         click.echo("  Generating metadata...")
@@ -121,7 +154,7 @@ def ingest_file(
     except Exception as e:
         if verbose:
             click.echo(f"  Error generating metadata: {e}")
-        return IngestResult(path.name, "failed", f"Error generating metadata: {e}")
+        return IngestResult(path.name, "failed", f"Error generating metadata: {e}", notes=notes)
 
     metadata.page_count = page_count
 
@@ -174,7 +207,7 @@ def ingest_file(
         if not click.confirm("  Accept and ingest?", default=True):
             if verbose:
                 click.echo("  Skipped.")
-            return IngestResult(path.name, "skipped", "declined by user")
+            return IngestResult(path.name, "skipped", "declined by user", notes=notes)
 
     # Write metadata (PDF only)
     try:
@@ -205,7 +238,7 @@ def ingest_file(
 
         ensure_cover(library_path, entry.id, metadata.isbn, entry.file_path)
 
-    return IngestResult(path.name, "ingested", dest_path=final_path)
+    return IngestResult(path.name, "ingested", dest_path=final_path, notes=notes)
 
 
 def _find_documents(inbox_path: Path) -> list[Path]:
@@ -225,6 +258,7 @@ def ingest_files(
     emit: bool = True,
     progress: bool = True,
     library_path: Path | None = None,
+    per_file_callback: Callable[[IngestResult], None] | None = None,
 ) -> dict:
     """Ingest a list of document files.
 
@@ -269,6 +303,8 @@ def ingest_files(
             doc_path, ai, storage, db, auto_confirm, reprocess, verbose, library_path
         )
         results.append(result)
+        if per_file_callback is not None:
+            per_file_callback(result)
 
     # Clear progress line
     if emit and progress and not verbose:
