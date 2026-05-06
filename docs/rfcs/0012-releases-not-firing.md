@@ -1,8 +1,14 @@
 # RFC 0012: Releases not being created after merging to main
 
 **Issue**: #31
-**Status**: Draft — awaiting approval
+**Status**: Implementing
 **Branch**: `rfc/31-releases-not-firing`
+
+**Resolutions** (from #31 comments):
+- **Q1**: Single combined `v0.11.0` covering both #23 and #28. Pushed manually out of band.
+- **Q2**: Strict enforcement — the skip-ci-guard fails the PR check (blocks merge) when the literal token is found.
+- **Q3**: Title + body only.
+- **Q4**: Out of scope — the release-gap monitor is **not** included in this implementation. The guard alone (Q2) is the prevention; if a future leak path slips through, we can add the monitor in a follow-up.
 
 ---
 
@@ -174,9 +180,8 @@ This is intentionally narrow — it doesn't try to predict whether a feat/fix sh
 
 ## Implementation Plan
 
-- [ ] Cut `v0.11.0` recovery tag manually (out of band — see *Recovery* above) covering #23 + #28.
-- [ ] Add `.github/workflows/skip-ci-guard.yml` enforcing the title/body scan on PRs targeting `main`.
-- [ ] Branch-protect `main` to require the *Skip-CI Guard / scan* check (only after the workflow lands and has been observed to pass on a clean PR).
-- [ ] Add `.github/workflows/release-gap-monitor.yml` with a daily cron + `workflow_dispatch` trigger.
+- [ ] Cut `v0.11.0` recovery tag manually (out of band — see *Recovery* above) covering #23 + #28. Per Q1: a single combined release.
+- [ ] Add `.github/workflows/skip-ci-guard.yml` enforcing the title/body scan on PRs targeting `main`. Per Q2: strict — the check fails (non-zero exit) on a hit. Per Q3: title + body only.
+- [ ] Branch-protect `main` to require the *Skip-CI Guard / scan* check (GitHub UI step, performed by the user after the workflow lands and has been observed to pass on a clean PR).
 - [ ] Update `README.md` §Releasing to mention the new guard (one line; the existing trap warning stays in place as the developer-facing rationale).
-- [ ] Smoke-test the guard by opening a throwaway PR whose body contains `[skip ci]` in prose and verifying the check fails; then escape it (`[skip-ci]`) and verify it passes.
+- [ ] Smoke-test the guard by opening a throwaway PR whose body contains the literal CI-skip token in prose and verifying the check fails; then escape it (hyphenated or wrapped in inline code) and verify it passes.

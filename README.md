@@ -194,6 +194,8 @@ Releases are automatic. Use [Conventional Commits](https://www.conventionalcommi
 On a qualifying merge, `auto-release.yml` bumps `pyproject.toml`, commits the bump as `github-actions[bot]`, and pushes a `vX.Y.Z` tag. Recursion is prevented by an actor + subject guard on the bump job, not by the GitHub CI-skip directive. The tag push then triggers `release-on-tag.yml`, which runs tests, builds the macOS `.dmg`, publishes to PyPI, optionally pushes to Chocolatey, and attaches all artifacts to a GitHub Release.
 
 > **Heads-up:** never include the literal CI-skip token (open bracket, `skip` `ci`, close bracket — described, not spelled, here so this README itself doesn't trip it) in commit messages or PR descriptions for changes that should run CI. GitHub honors that token on **any line** of a commit message and silently skips every workflow. If you need to refer to it in prose, hyphenate it (`[skip-ci]`) or wrap it in inline code that the squash-merge will preserve as backticks.
+>
+> The `Skip-CI Guard` workflow (RFC 0012) enforces this on every PR targeting `main` — a PR whose title or body contains a literal CI-skip directive will fail the check and cannot be merged until the token is escaped.
 
 Pre-1.0: `BREAKING CHANGE:` bumps minor (no major bumps until `1.0.0`).
 
