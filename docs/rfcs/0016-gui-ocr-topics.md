@@ -1,8 +1,15 @@
 # RFC 0016: OCR and topic modeling from the GUI
 
 **Issue**: #39
-**Status**: Draft — awaiting approval
+**Status**: Implementing
 **Branch**: `rfc/39-gui-ocr-topics`
+
+**Resolutions** (from #39 comments):
+- **Q1**: A — Topics pane lives in the sidebar, below the Backup pane.
+- **Q2**: OCR is one-shot per document (no streaming). Streaming is reserved for topics.
+- **Q3**: Yes, confirmation dialog before topics build. Advanced toggle exposes `--n-topics`.
+- **Q4**: Re-fetch the document list and topic vocabulary after topics build, after ingest, after OCR (and after `wst fix` as a follow-up — fix is out of scope here).
+- **Q5**: A "needs OCR" indicator is welcome **if easy**. We'll evaluate during implementation; if it requires schema migration or a heuristic at ingest, defer to a follow-up.
 
 ---
 

@@ -145,9 +145,9 @@ wst backup providers --format json  # list providers and configured state
 | `wst fix` | Batch enrich documents with missing metadata. Options: `--type`, `--field`, `--dry-run`, `-y` |
 | `wst stats` | Show metadata coverage statistics. Options: `--type` |
 | `wst browse` | Interactive TUI for browsing and editing documents |
-| `wst ocr <id-or-path>` | Run OCR on scanned PDFs |
+| `wst ocr <id-or-title-or-path>` | Run OCR on scanned PDFs. Accepts a document ID, title, or filesystem path. Also exposed in the GUI as an OCR button on each document. |
 | `wst backup [provider]` | Backup files to iCloud, Google Drive, or S3. Providers: `icloud`, `gdrive`, `s3`. Use `--all` for full-library backup. The GUI exposes the same providers via the **Backup pane** in the sidebar. |
-| `wst topics build` | Cluster the corpus into a topic vocabulary and assign topics to every document |
+| `wst topics build` | Cluster the corpus into a topic vocabulary and assign topics to every document. Also exposed in the GUI as a **Topics pane** in the sidebar with progress streaming. |
 
 ## How Ingestion Works
 

@@ -8,8 +8,10 @@ import {
   getTopicsVocabulary,
   backupDocument,
   listBackupProviders,
+  ocrDocument,
   type BackupProvider,
 } from "../lib/tauri";
+import { refreshLibraryState } from "../lib/store";
 import { DOC_TYPE_LABELS } from "../lib/types";
 import type { Document } from "../lib/types";
 
@@ -133,6 +135,32 @@ export default function BookDetail() {
     }
   };
 
+  const [ocrRunning, setOcrRunning] = createSignal(false);
+
+  const handleOcr = async (id: number) => {
+    if (ocrRunning()) return;
+    setOcrRunning(true);
+    setBackupError(false);
+    setBackupStatus("Ejecutando OCR…");
+    try {
+      const result = await ocrDocument(id);
+      const summary =
+        result.ok_count > 0
+          ? "OCR completado ✓"
+          : result.skipped_count > 0
+            ? "Ya tenía texto, OCR omitido"
+            : "OCR sin cambios";
+      setBackupStatus(summary);
+      await refreshLibraryState();
+    } catch (err) {
+      setBackupError(true);
+      setBackupStatus(String(err));
+    } finally {
+      setOcrRunning(false);
+      setTimeout(() => setBackupStatus(null), 4000);
+    }
+  };
+
   const close = () => {
     setEditing(false);
     setSelectedDoc(null);
@@ -179,6 +207,14 @@ export default function BookDetail() {
                     onClick={() => revealInFinder(d().file_path)}
                   >
                     Mostrar en Finder
+                  </button>
+                  <button
+                    class="btn btn-secondary"
+                    onClick={() => handleOcr(d().id)}
+                    disabled={ocrRunning()}
+                    title="Ejecuta OCR si el PDF es escaneado (skip si ya tiene texto)"
+                  >
+                    {ocrRunning() ? "OCR…" : "🔍 OCR"}
                   </button>
                   <div class="backup-menu">
                     <button

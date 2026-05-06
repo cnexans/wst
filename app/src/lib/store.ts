@@ -1,5 +1,11 @@
 import { createSignal } from "solid-js";
 import type { Document, LibraryStats } from "./types";
+import {
+  getLibraryStats,
+  getSubjects,
+  getTopicsVocabulary,
+  listDocuments,
+} from "./tauri";
 
 export const [documents, setDocuments] = createSignal<Document[]>([]);
 export const [searchQuery, setSearchQuery] = createSignal("");
@@ -25,4 +31,22 @@ export function clearAllFilters() {
   setActiveDocType(null);
   setActiveTopic(null);
   setActiveSubject(null);
+}
+
+/**
+ * Re-fetch documents, stats, topic vocab, and subjects from the backend.
+ * Call this after operations that mutate the library: ingest (RFC 0013),
+ * OCR or topics build (RFC 0016).
+ */
+export async function refreshLibraryState(): Promise<void> {
+  const [stats, docs, vocab, subjects] = await Promise.all([
+    getLibraryStats(),
+    listDocuments(),
+    getTopicsVocabulary(),
+    getSubjects(),
+  ]);
+  setLibraryStats(stats);
+  setDocuments(docs);
+  setAllTopicsVocab(vocab);
+  setAllSubjects(subjects);
 }

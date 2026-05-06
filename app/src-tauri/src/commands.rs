@@ -279,6 +279,109 @@ pub fn cancel_ingest(
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// RFC 0016 — topics build from GUI (streaming via NDJSON)
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Deserialize, Default)]
+pub struct TopicsBuildOpts {
+    /// Optional --n-topics override; None means auto-detect.
+    pub n_topics: Option<u32>,
+}
+
+#[derive(serde::Serialize, Default)]
+pub struct TopicsBuildResult {
+    pub vocabulary: Vec<String>,
+    pub assigned_count: u64,
+    pub subjects_updated: u64,
+}
+
+#[tauri::command]
+pub async fn build_topics(
+    opts: Option<TopicsBuildOpts>,
+    window: Window,
+) -> Result<TopicsBuildResult, String> {
+    let opts = opts.unwrap_or_default();
+    let wst_path = which_wst();
+
+    let mut args: Vec<String> = vec![
+        "topics".into(),
+        "build".into(),
+        "--yes".into(),
+        "--format".into(),
+        "ndjson".into(),
+    ];
+    if let Some(n) = opts.n_topics {
+        args.push("--n-topics".into());
+        args.push(n.to_string());
+    }
+
+    let mut child = Command::new(&wst_path)
+        .args(&args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to spawn wst: {e}"))?;
+
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "missing stdout from wst".to_string())?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "missing stderr from wst".to_string())?;
+
+    let win_err = window.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let reader = BufReader::new(stderr);
+        for line in reader.lines().map_while(Result::ok) {
+            let _ = win_err.emit("topics:log", line);
+        }
+    });
+
+    let win = window.clone();
+    let parse_handle = tauri::async_runtime::spawn_blocking(
+        move || -> Result<TopicsBuildResult, String> {
+            let reader = BufReader::new(stdout);
+            let mut result = TopicsBuildResult::default();
+            for line in reader.lines().map_while(Result::ok) {
+                let value: serde_json::Value = match serde_json::from_str(&line) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+                let _ = win.emit("topics:event", value.clone());
+                if value.get("event").and_then(|v| v.as_str()) == Some("done") {
+                    result.vocabulary = value
+                        .get("vocabulary")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    result.assigned_count = value
+                        .get("assigned_count")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    result.subjects_updated = value
+                        .get("subjects_updated")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                }
+            }
+            Ok(result)
+        },
+    );
+
+    let result = parse_handle
+        .await
+        .map_err(|e| format!("parse task failed: {e}"))??;
+    let _ = child.wait();
+    Ok(result)
+}
+
 #[tauri::command]
 pub fn backup_to_icloud(library_path: State<LibraryPath>) -> Result<String, String> {
     let home = dirs::home_dir().ok_or("Could not determine home directory")?;

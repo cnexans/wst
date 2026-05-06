@@ -7,17 +7,9 @@ import {
   activeSubject,
   sortBy,
   viewMode,
-  setLibraryStats,
-  setAllTopicsVocab,
-  setAllSubjects,
+  refreshLibraryState,
 } from "./lib/store";
-import {
-  listDocuments,
-  searchDocuments,
-  getLibraryStats,
-  getTopicsVocabulary,
-  getSubjects,
-} from "./lib/tauri";
+import { listDocuments, searchDocuments } from "./lib/tauri";
 import SearchBar from "./components/SearchBar";
 import Sidebar from "./components/Sidebar";
 import Toolbar, {
@@ -37,18 +29,7 @@ export default function App() {
   let fetchId = 0;
   const [fading, setFading] = createSignal(false);
 
-  onMount(async () => {
-    const [stats, docs, vocab, subjects] = await Promise.all([
-      getLibraryStats(),
-      listDocuments(),
-      getTopicsVocabulary(),
-      getSubjects(),
-    ]);
-    setLibraryStats(stats);
-    setDocuments(docs);
-    setAllTopicsVocab(vocab);
-    setAllSubjects(subjects);
-  });
+  onMount(refreshLibraryState);
 
   createEffect(
     on(
@@ -119,19 +100,7 @@ export default function App() {
       <Show when={showIngest()}>
         <IngestModal
           onClose={() => setShowIngest(false)}
-          onComplete={async () => {
-            // RFC 0013 — refresh library state after a GUI ingest run.
-            const [stats, docs, vocab, subjects] = await Promise.all([
-              getLibraryStats(),
-              listDocuments(),
-              getTopicsVocabulary(),
-              getSubjects(),
-            ]);
-            setLibraryStats(stats);
-            setDocuments(docs);
-            setAllTopicsVocab(vocab);
-            setAllSubjects(subjects);
-          }}
+          onComplete={refreshLibraryState}
         />
       </Show>
     </div>

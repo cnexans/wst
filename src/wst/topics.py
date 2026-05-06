@@ -515,15 +515,21 @@ def assign_topics(
     db: Database,
     ai_backend: AIBackend,
     vocabulary: list[str],
+    on_progress: Callable[[int, int, int, list[str]], None] | None = None,
 ) -> dict[int, list[str]]:
     """Assign 1-3 topics from vocabulary to every document.
+
+    on_progress, if provided, is invoked once per document with
+    `(index, total, doc_id, topics)` so callers (e.g. the CLI in NDJSON
+    mode) can stream per-document progress.
 
     Returns {doc_id: [topic1, topic2, ...]}
     """
     entries = db.list_all()
+    total = len(entries)
     assignments: dict[int, list[str]] = {}
 
-    for entry in entries:
+    for index, entry in enumerate(entries, 1):
         m = entry.metadata
         doc = {
             "title": m.title,
@@ -536,6 +542,8 @@ def assign_topics(
         raw = _call_ai_raw(ai_backend, prompt)
         topics = _parse_json_list(raw, vocabulary)
         assignments[entry.id] = topics  # type: ignore[assignment]
+        if on_progress is not None:
+            on_progress(index, total, entry.id, topics)  # type: ignore[arg-type]
 
     return assignments
 
