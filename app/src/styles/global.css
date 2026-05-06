@@ -1069,3 +1069,144 @@ body.resizing {
   justify-content: flex-end;
   margin-top: 16px;
 }
+
+/* Backup menu inside BookDetail */
+.backup-menu {
+  position: relative;
+  display: inline-block;
+}
+
+.backup-menu-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 160px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0;
+}
+
+.backup-menu-item {
+  background: transparent;
+  border: none;
+  padding: 8px 12px;
+  text-align: left;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.backup-menu-item:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.backup-menu-item:disabled {
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+/* Sidebar Backup pane */
+.backup-pane {
+  margin-top: 16px;
+  padding: 0 8px 8px 8px;
+}
+
+.backup-provider-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.backup-provider-row-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.backup-provider-status {
+  font-size: 11px;
+}
+
+.backup-provider-status--ok {
+  color: var(--accent);
+}
+
+.backup-provider-status--off {
+  color: var(--text-muted);
+}
+
+.backup-provider-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.backup-provider-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.backup-provider-hint code {
+  font-family: monospace;
+  font-size: 11px;
+}
+
+.btn-small {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.backup-pane-status {
+  margin: 6px 8px 0;
+  font-size: 11px;
+  color: var(--accent);
+}
+
+.backup-pane-status--error {
+  color: #c0392b;
+}
+
+.backup-wizard {
+  margin: 8px 8px 0;
+  padding: 10px;
+  background: var(--bg-hover);
+  border-radius: var(--radius-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.backup-wizard-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.backup-wizard-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+}
+
+.backup-wizard-field input {
+  padding: 4px 8px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.backup-wizard-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}

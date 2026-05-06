@@ -1,8 +1,15 @@
 # RFC 0014: Backup all to iCloud and Google Drive (CLI + GUI)
 
 **Issue**: #35
-**Status**: Draft — awaiting approval
+**Status**: Implementing
 **Branch**: `rfc/35-backup-all-cloud-providers`
+
+**Resolutions** (from #35 comments):
+- **Q1**: Auto-pick the first macOS Drive match silently. The GUI lets the user confirm/select if multiple accounts exist; the CLI accepts a `--path` argument for explicit override.
+- **Q2**: New **Backup pane** in `Sidebar.tsx`.
+- **Q3**: Default subfolder `wst` (same as iCloud).
+- **Q4**: Inline configuration wizard in the GUI when a provider is unconfigured.
+- **Q5**: Keep `backup_to_icloud` as a deprecated shim; add new `backup_document(id, provider)` alongside.
 
 ---
 

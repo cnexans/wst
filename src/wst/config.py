@@ -54,6 +54,22 @@ def save_s3_config(
     _save_config_file(data)
 
 
+def get_gdrive_config() -> dict | None:
+    """Get Google Drive configuration from config.json. Returns None if not configured."""
+    data = _load_config_file()
+    gdrive = data.get("gdrive")
+    if not gdrive or not gdrive.get("root"):
+        return None
+    return gdrive
+
+
+def save_gdrive_config(root: str, subfolder: str = "wst") -> None:
+    """Save Google Drive configuration to config.json."""
+    data = _load_config_file()
+    data["gdrive"] = {"root": root, "subfolder": subfolder}
+    _save_config_file(data)
+
+
 @dataclass
 class WstConfig:
     home_path: Path = field(default_factory=lambda: WST_HOME)
