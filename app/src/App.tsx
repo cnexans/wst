@@ -20,11 +20,17 @@ import {
 } from "./lib/tauri";
 import SearchBar from "./components/SearchBar";
 import Sidebar from "./components/Sidebar";
-import Toolbar, { showExtras, setShowExtras } from "./components/Toolbar";
+import Toolbar, {
+  showExtras,
+  setShowExtras,
+  showIngest,
+  setShowIngest,
+} from "./components/Toolbar";
 import BookGrid from "./components/BookGrid";
 import BookList from "./components/BookList";
 import BookDetail from "./components/BookDetail";
 import ExtrasPanel from "./components/ExtrasPanel";
+import IngestModal from "./components/IngestModal";
 
 export default function App() {
   let debounceTimer: number | undefined;
@@ -109,6 +115,24 @@ export default function App() {
       <BookDetail />
       <Show when={showExtras()}>
         <ExtrasPanel onClose={() => setShowExtras(false)} />
+      </Show>
+      <Show when={showIngest()}>
+        <IngestModal
+          onClose={() => setShowIngest(false)}
+          onComplete={async () => {
+            // RFC 0013 — refresh library state after a GUI ingest run.
+            const [stats, docs, vocab, subjects] = await Promise.all([
+              getLibraryStats(),
+              listDocuments(),
+              getTopicsVocabulary(),
+              getSubjects(),
+            ]);
+            setLibraryStats(stats);
+            setDocuments(docs);
+            setAllTopicsVocab(vocab);
+            setAllSubjects(subjects);
+          }}
+        />
       </Show>
     </div>
   );

@@ -54,6 +54,10 @@ xattr -cr /Applications/Wan\ Shi\ Tong.app
 
 Then open the app normally.
 
+#### Ingestar desde la GUI
+
+The toolbar has an **Ingestar** button that opens a native picker for files or a folder. The app spawns the bundled CLI behind the scenes (`wst ingest --format ndjson`) and shows per-file progress as documents are processed. Scanned PDFs are OCR'd automatically when `ocrmypdf` is installed; if it's not, the row gets a "OCR tools not installed" note and the document is ingested with whatever text and metadata are available.
+
 ### Homebrew (macOS/Linux)
 
 ```bash

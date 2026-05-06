@@ -16,7 +16,7 @@ from wst.storage import LocalStorage, build_dest_path
 
 F = TypeVar("F", bound=Callable[..., Any])
 
-FORMAT_CHOICE = click.Choice(["human", "md", "json", "yaml"], case_sensitive=False)
+FORMAT_CHOICE = click.Choice(["human", "md", "json", "yaml", "ndjson"], case_sensitive=False)
 
 
 def _apply_command_format(ctx: click.Context, param: click.Parameter, value: str | None) -> None:
@@ -67,7 +67,7 @@ class WstCli(click.Group):
             except Exception:
                 fmt = None
 
-            if fmt in {"md", "json", "yaml"}:
+            if fmt in {"md", "json", "yaml", "ndjson"}:
                 from wst.output import WstError, render_error
 
                 if isinstance(e, WstError):
@@ -187,7 +187,12 @@ def cli(
 @click.option("--reprocess", "-r", is_flag=True, help="Re-ingest duplicates with fresh AI metadata")
 @click.option("--keep-inbox", is_flag=True, help="Don't clean inbox after processing")
 @click.option("--verbose", "-v", is_flag=True, help="Show detailed per-file processing logs")
-@click.option("--ocr", is_flag=True, help="Auto-OCR scanned PDFs before processing")
+@click.option(
+    "--ocr",
+    is_flag=True,
+    help="Force OCR on every PDF (default: auto-detect — OCR scanned PDFs only "
+    "when ocrmypdf is installed; warn otherwise)",
+)
 @click.option(
     "--ocr-language",
     default="spa",
@@ -230,24 +235,68 @@ def ingest(
     fmt: str = ctx.obj.get("format", "human")
     config.ensure_dirs()
 
+    # NDJSON mode (RFC 0013): line-buffer stdout, auto-confirm, emit one JSON
+    # event per file as it finishes, plus a final summary event.
+    if fmt == "ndjson":
+        import sys
+
+        try:
+            sys.stdout.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
+        except (AttributeError, ValueError):
+            pass
+        # Suppress the interactive "Accept and ingest?" prompt; the consumer
+        # of NDJSON has no terminal in which to answer it.
+        confirm = False
+
     ai = get_ai_backend(config.ai_backend, config.ai_model)
     storage = LocalStorage(config.library_path)
     db = Database(config.db_path)
 
     try:
+        import json as _json
+
         removed = 0
         if path is not None:
             copied_files = _copy_to_inbox(path, config.inbox_path)
             if not copied_files:
-                click.echo("No supported files found at the given path.")
+                if fmt == "human":
+                    click.echo("No supported files found at the given path.")
+                elif fmt == "ndjson":
+                    click.echo(
+                        _json.dumps(
+                            {
+                                "event": "summary",
+                                "processed": 0,
+                                "ingested": 0,
+                                "skipped": 0,
+                                "failed": 0,
+                            }
+                        ),
+                        nl=True,
+                    )
                 return
-            click.echo(f"Copied {len(copied_files)} file(s) to inbox.")
+            if fmt == "human":
+                click.echo(f"Copied {len(copied_files)} file(s) to inbox.")
             files_to_process = copied_files
         else:
             if not config.inbox_path.exists() or not any(
                 p for p in config.inbox_path.rglob("*") if is_supported(p)
             ):
-                click.echo(f"No supported files in inbox ({config.inbox_path}).")
+                if fmt == "human":
+                    click.echo(f"No supported files in inbox ({config.inbox_path}).")
+                elif fmt == "ndjson":
+                    click.echo(
+                        _json.dumps(
+                            {
+                                "event": "summary",
+                                "processed": 0,
+                                "ingested": 0,
+                                "skipped": 0,
+                                "failed": 0,
+                            }
+                        ),
+                        nl=True,
+                    )
                 return
             files_to_process = _find_documents(config.inbox_path)
 
@@ -275,6 +324,21 @@ def ingest(
         if fmt == "human":
             click.echo("--- Ingest pass ---")
 
+        # NDJSON per-file callback: emit one event per IngestResult as it lands.
+        per_file_callback = None
+        if fmt == "ndjson":
+
+            def per_file_callback(r):  # type: ignore[no-redef]
+                payload = {
+                    "event": "file",
+                    "filename": r.filename,
+                    "status": r.status,
+                    "reason": r.reason,
+                    "dest_path": r.dest_path,
+                    "notes": list(r.notes),
+                }
+                click.echo(_json.dumps(payload), nl=True)
+
         ingest_summary = ingest_files(
             files_to_process,
             ai,
@@ -286,6 +350,7 @@ def ingest(
             emit=(fmt == "human"),
             progress=(fmt == "human"),
             library_path=config.library_path,
+            per_file_callback=per_file_callback,
         )
 
         if path is None and not keep_inbox:
@@ -293,7 +358,21 @@ def ingest(
             if fmt == "human" and removed > 0:
                 click.echo(f"Cleaned inbox: removed {removed} remaining file(s).")
 
-        if fmt != "human":
+        if fmt == "ndjson":
+            click.echo(
+                _json.dumps(
+                    {
+                        "event": "summary",
+                        "processed": ingest_summary["processed"],
+                        "ingested": ingest_summary["ingested"],
+                        "skipped": ingest_summary["skipped"],
+                        "failed": ingest_summary["failed"],
+                        "cleaned_inbox_removed": removed,
+                    }
+                ),
+                nl=True,
+            )
+        elif fmt != "human":
             from wst.output import render_ok
 
             render_ok(
