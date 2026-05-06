@@ -1,7 +1,7 @@
 # RFC 0015: Cache Rust/npm/pip in the release workflow
 
 **Issue**: #37
-**Status**: Draft — awaiting approval
+**Status**: Implementing
 **Branch**: `rfc/37-ci-release-caches`
 
 ---
