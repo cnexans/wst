@@ -30,37 +30,65 @@ jobs:
           choco pack
           Get-ChildItem *.nupkg | ForEach-Object { Write-Host "PACKED: $($_.Name) ($($_.Length) bytes)" }
 
-      - name: Push with curl, capture full response body
+      - name: Push variant A — multipart (-F)
         shell: pwsh
         env:
           CHOCO_KEY: ${{ secrets.CHOCOLATEY_API_KEY }}
         run: |
           cd packaging/chocolatey
           $nupkg = Get-ChildItem *.nupkg | Select-Object -First 1
-          Write-Host "Pushing: $($nupkg.FullName)"
+          Write-Host "Pushing: $($nupkg.FullName)  (multipart)"
           Write-Host "Key length (chars): $($env:CHOCO_KEY.Length)"
-
-          # -v prints request/response headers; --data-binary + -X PUT mirrors
-          # what NuGet does internally. `--write-out` appends a final summary
-          # line so we always see the final status, even on 4xx.
           curl.exe -v -X PUT `
             -H "X-NuGet-ApiKey: $env:CHOCO_KEY" `
-            -H "Accept: application/json" `
             -F "package=@$($nupkg.FullName)" `
             --write-out "`n---HTTP_STATUS=%{http_code}---`n" `
             https://push.chocolatey.org/api/v2/package/
         continue-on-error: true
 
-      - name: Sanity check — verify key works for read endpoint
+      - name: Push variant B — raw binary (--upload-file)
         shell: pwsh
         env:
           CHOCO_KEY: ${{ secrets.CHOCOLATEY_API_KEY }}
         run: |
-          # Whoami-style endpoint: list our packages. If the key is dead this
-          # also returns 403; if read works but push doesn't, scope is wrong.
+          cd packaging/chocolatey
+          $nupkg = Get-ChildItem *.nupkg | Select-Object -First 1
+          Write-Host "Pushing: $($nupkg.FullName)  (raw binary)"
+          curl.exe -v -X PUT `
+            -H "X-NuGet-ApiKey: $env:CHOCO_KEY" `
+            -H "Content-Type: application/octet-stream" `
+            --upload-file $nupkg.FullName `
+            --write-out "`n---HTTP_STATUS=%{http_code}---`n" `
+            https://push.chocolatey.org/api/v2/package/
+        continue-on-error: true
+
+      - name: Read sanity check — list our packages with the key
+        shell: pwsh
+        env:
+          CHOCO_KEY: ${{ secrets.CHOCOLATEY_API_KEY }}
+        run: |
+          # Single-quote the URL so PowerShell doesn't expand $filter as a var.
+          # If the key is dead this also returns 403; if read works but push
+          # doesn't, the key has read-only scope.
+          $url = 'https://community.chocolatey.org/api/v2/Packages()?$filter=Id%20eq%20''wst'''
+          Write-Host "URL: $url"
           curl.exe -v `
             -H "X-NuGet-ApiKey: $env:CHOCO_KEY" `
-            -H "Accept: application/json" `
+            -H "Accept: application/atom+xml" `
             --write-out "`n---HTTP_STATUS=%{http_code}---`n" `
-            "https://community.chocolatey.org/api/v2/Packages()?`$filter=Id eq 'wst'"
+            $url
+        continue-on-error: true
+
+      - name: ApiKey verify endpoint
+        shell: pwsh
+        env:
+          CHOCO_KEY: ${{ secrets.CHOCOLATEY_API_KEY }}
+        run: |
+          # NuGet protocol exposes /api/v2/verifykey/<id> for clients to
+          # validate a key WITHOUT pushing. If chocolatey.org implements this
+          # we get a clear "valid"/"invalid" answer.
+          curl.exe -v `
+            -H "X-NuGet-ApiKey: $env:CHOCO_KEY" `
+            --write-out "`n---HTTP_STATUS=%{http_code}---`n" `
+            'https://push.chocolatey.org/api/v2/verifykey/wst'
         continue-on-error: true
