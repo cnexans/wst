@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import type { Document, LibraryStats } from "./types";
 
 export async function listDocuments(
@@ -99,4 +100,49 @@ export async function installExtra(name: string, upgrade = false): Promise<strin
   const args = ["install", name];
   if (upgrade) args.push("--upgrade");
   return invoke<string>("run_wst_command", { args });
+}
+
+// ---------------------------------------------------------------------------
+// RFC 0013 — ingest from GUI
+// ---------------------------------------------------------------------------
+
+export interface IngestFileEvent {
+  event: "file";
+  filename: string;
+  status: "ingested" | "skipped" | "failed";
+  reason: string;
+  dest_path: string;
+  notes: string[];
+}
+
+export interface IngestSummary {
+  processed: number;
+  ingested: number;
+  skipped: number;
+  failed: number;
+  cleaned_inbox_removed: number;
+}
+
+export interface IngestOpts {
+  force_ocr?: boolean;
+}
+
+export async function ingestFiles(
+  paths: string[],
+  opts: IngestOpts,
+  sessionId: string
+): Promise<IngestSummary> {
+  return invoke("ingest_files", { paths, opts, sessionId });
+}
+
+export async function cancelIngest(sessionId: string): Promise<void> {
+  return invoke("cancel_ingest", { sessionId });
+}
+
+export function onIngestFile(cb: (e: IngestFileEvent) => void) {
+  return listen<IngestFileEvent>("ingest:file", (event) => cb(event.payload));
+}
+
+export function onIngestLog(cb: (line: string) => void) {
+  return listen<string>("ingest:log", (event) => cb(event.payload));
 }

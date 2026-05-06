@@ -12,6 +12,8 @@
     },
     {
       "identifier": "core:resources:default"
-    }
+    },
+    "dialog:default",
+    "dialog:allow-open"
   ]
 }

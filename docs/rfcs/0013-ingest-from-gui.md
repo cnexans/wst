@@ -1,8 +1,15 @@
 # RFC 0013: Allow ingesting from GUI
 
 **Issue**: #32
-**Status**: Draft — awaiting approval
+**Status**: Implementing
 **Branch**: `rfc/32-ingest-from-gui`
+
+**Resolutions** (from #32 comments):
+- **Q1**: Native picker only, supporting either files OR a folder. No drag-and-drop in v1.
+- **Q2**: Add `--format ndjson` to the CLI; the GUI consumes that stream.
+- **Q3**: Auto-confirm is the **only** option for the GUI — no per-file review/edit flow.
+- **Q4**: **Auto-detect**, do not show a checkbox. If `ocrmypdf` is installed, OCR scanned PDFs automatically; if not, surface a per-file warning and proceed with whatever extractable text exists. (Different from the original explicit-checkbox proposal.)
+- **Q5**: Inbox copy stays — the GUI calls the same CLI path so the user can clean up the source folder afterward freely.
 
 ---
 
@@ -129,11 +136,11 @@ IngestModal → invoke("ingest_files", {paths, opts}) → Tauri spawns `wst inge
 
 ## Implementation Plan
 
-- [ ] Add `--format ndjson` to `wst ingest` in `src/wst/cli.py` — emit one `{"event":"file",...}` line per `IngestResult` plus a final `{"event":"summary",...}` line; line-buffer stdout; imply `--yes`.
-- [ ] Tests: `tests/test_ingest.py` covering the NDJSON event sequence (happy path, mixed success/skip/fail, empty input).
-- [ ] Add `ingest_files(paths, opts)` and `cancel_ingest(session_id)` Tauri commands in `app/src-tauri/src/commands.rs`. Spawn the CLI sidecar, parse NDJSON, emit `ingest:file` / `ingest:log` events, return `IngestSummary` on completion.
-- [ ] Add `@tauri-apps/plugin-dialog` to `app/src-tauri/Cargo.toml` and `app/package.json` so the frontend can open native file/folder pickers.
-- [ ] Frontend: new `IngestModal.tsx` component (mirrors `ExtrasPanel.tsx` overlay style); wire the toolbar "Ingestar" button in `Toolbar.tsx`; emit a `library:changed` window event on close so the grid refreshes.
-- [ ] Wire the OCR checkbox to the existing `getExtrasStatus()` helper so it disables itself when the `ocr` extra is missing.
+- [ ] Add `--format ndjson` to `wst ingest` in `src/wst/cli.py` — emit one `{"event":"file",...}` line per `IngestResult` plus a final `{"event":"summary",...}` line; line-buffer stdout; imply `--yes`. Per Q2.
+- [ ] Auto-detect OCR (Q4): in the per-file ingest flow, when the extracted `text_sample` is too thin to be useful, run OCR if `ocrmypdf` is on `PATH`, otherwise emit a per-file `{"event":"warning",...}` (NDJSON mode) or stderr line (other modes) and continue with whatever text exists. The existing `--ocr` flag stays as the explicit force-on override. Apply uniformly to both CLI and GUI ingest paths since the GUI just calls the CLI.
+- [ ] Tests: `tests/test_ingest.py` covering the NDJSON event sequence (happy path, mixed success/skip/fail, OCR auto-detect when text is sparse and `ocrmypdf` is missing/present).
+- [ ] Add `ingest_files(paths, opts)` and `cancel_ingest(session_id)` Tauri commands in `app/src-tauri/src/commands.rs`. Spawn the CLI sidecar, parse NDJSON, emit `ingest:file` / `ingest:warning` / `ingest:log` events, return `IngestSummary` on completion.
+- [ ] Add `tauri-plugin-dialog` to `app/src-tauri/Cargo.toml` and `@tauri-apps/plugin-dialog` to `app/package.json` for native file/folder picker (Q1).
+- [ ] Frontend: new `IngestModal.tsx` component (mirrors `ExtrasPanel.tsx` overlay style); wire the toolbar "Ingestar" button in `Toolbar.tsx`; emit a `library:changed` window event on close so the grid refreshes. No OCR checkbox per Q4 — surface OCR auto-detect warnings inline as per-file rows tagged "OCR no disponible".
 - [ ] Smoke-test: ingest a 3-file folder via the GUI and confirm rows appear in the grid without restart; cancel mid-ingest and confirm the inbox is recoverable.
-- [ ] README: add a "Desktop app — ingestar" subsection under the existing Desktop App install block, screenshot of the modal, one-line description of the OCR toggle.
+- [ ] README: add a "Desktop app — Ingestar" subsection under the existing Desktop App install block; one-line description of the auto-detect OCR behavior and the warning when tools are missing.
