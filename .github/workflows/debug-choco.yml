@@ -1,0 +1,66 @@
+name: Debug Chocolatey Push
+
+# Temporary workflow to capture the chocolatey.org response body for our 403.
+# `choco push` swallows the body and only echoes the status code, so we use
+# curl directly. Triggered manually via `gh workflow run debug-choco.yml`.
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  test-push:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pack a unique test nupkg
+        shell: pwsh
+        run: |
+          # Use a high version with a pre-release tag so it is clearly a debug
+          # artifact and never collides with a real release.
+          $version = "99.99.99-debug-$([int][double]::Parse((Get-Date -UFormat %s)))"
+          Write-Host "Test version: $version"
+          (Get-Content packaging/chocolatey/wst.nuspec) `
+            -replace '<version>.*</version>', "<version>$version</version>" `
+            | Set-Content packaging/chocolatey/wst.nuspec
+          cd packaging/chocolatey
+          choco pack
+          Get-ChildItem *.nupkg | ForEach-Object { Write-Host "PACKED: $($_.Name) ($($_.Length) bytes)" }
+
+      - name: Push with curl, capture full response body
+        shell: pwsh
+        env:
+          CHOCO_KEY: ${{ secrets.CHOCOLATEY_API_KEY }}
+        run: |
+          cd packaging/chocolatey
+          $nupkg = Get-ChildItem *.nupkg | Select-Object -First 1
+          Write-Host "Pushing: $($nupkg.FullName)"
+          Write-Host "Key length (chars): $($env:CHOCO_KEY.Length)"
+
+          # -v prints request/response headers; --data-binary + -X PUT mirrors
+          # what NuGet does internally. `--write-out` appends a final summary
+          # line so we always see the final status, even on 4xx.
+          curl.exe -v -X PUT `
+            -H "X-NuGet-ApiKey: $env:CHOCO_KEY" `
+            -H "Accept: application/json" `
+            -F "package=@$($nupkg.FullName)" `
+            --write-out "`n---HTTP_STATUS=%{http_code}---`n" `
+            https://push.chocolatey.org/api/v2/package/
+        continue-on-error: true
+
+      - name: Sanity check — verify key works for read endpoint
+        shell: pwsh
+        env:
+          CHOCO_KEY: ${{ secrets.CHOCOLATEY_API_KEY }}
+        run: |
+          # Whoami-style endpoint: list our packages. If the key is dead this
+          # also returns 403; if read works but push doesn't, scope is wrong.
+          curl.exe -v `
+            -H "X-NuGet-ApiKey: $env:CHOCO_KEY" `
+            -H "Accept: application/json" `
+            --write-out "`n---HTTP_STATUS=%{http_code}---`n" `
+            "https://community.chocolatey.org/api/v2/Packages()?`$filter=Id eq 'wst'"
+        continue-on-error: true
