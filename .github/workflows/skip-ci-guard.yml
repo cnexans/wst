@@ -1,0 +1,47 @@
+name: Skip-CI Guard
+
+# RFC 0012 — fail any PR targeting main whose title or body contains a literal
+# GitHub CI-skip directive. GitHub honors those tokens on any line of a commit
+# message and silently skips every workflow for the merge — including
+# auto-release. Squash-merge writes the PR title + body verbatim into the
+# commit, so checking the PR is the only enforcement point that runs *before*
+# the bad commit message exists.
+#
+# Hyphenated forms (e.g. "[skip-ci]") and inline-code spans (e.g. `[skip ci]`)
+# are NOT matched, so prose that needs to discuss the trap can do so safely.
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject literal CI-skip tokens in PR title/body
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -eo pipefail
+          # GitHub's documented skip directives, matched as standalone bracketed
+          # tokens (case-insensitive). Per RFC 0012 Q3, only PR title + body are
+          # scanned (not review/comment bodies — those don't reach the squash
+          # commit message anyway).
+          PATTERN='\[(skip ci|ci skip|no ci|skip actions|actions skip)\]'
+          if { printf '%s\n' "${PR_TITLE:-}"; printf '%s\n' "${PR_BODY:-}"; } \
+              | grep -Eqi "$PATTERN"; then
+            echo "::error::PR title or body contains a literal CI-skip directive."
+            echo
+            echo "GitHub honors these tokens on any line of the squash-merge"
+            echo "commit and silently skips every workflow for the merge —"
+            echo "including auto-release. Hyphenate the token (e.g. [skip-ci])"
+            echo "or wrap it in inline code so it survives the squash without"
+            echo "triggering GitHub's parser. See README §Releasing."
+            exit 1
+          fi
+          echo "OK — no skip-ci leak detected in PR title or body."
