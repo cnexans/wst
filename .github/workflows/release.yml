@@ -232,22 +232,28 @@ jobs:
           name: linux-x86_64-deb
           path: ${{ steps.linux-artifacts.outputs.deb }}
 
-  chocolatey:
-    needs: test
-    runs-on: windows-latest
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: v${{ inputs.version }}
-      - name: Set version in nuspec
-        shell: pwsh
-        run: |
-          $version = "${{ inputs.version }}"
-          (Get-Content packaging/chocolatey/wst.nuspec) -replace '<version>.*</version>', "<version>$version</version>" | Set-Content packaging/chocolatey/wst.nuspec
-      - name: Pack and push
-        shell: pwsh
-        run: |
-          cd packaging/chocolatey
-          choco pack
-          choco push --source https://push.chocolatey.org/ --api-key ${{ secrets.CHOCOLATEY_API_KEY }} --verbose
+  # Chocolatey publish disabled while wst/0.1.1 is still in chocolatey.org's
+  # moderation queue ("waiting for review"). chocolatey.org's front-end blocks
+  # any push of new versions for moderated packages with a generic IIS 403
+  # ("Access is denied"), even though `verifykey` returns 200 and the API key
+  # is otherwise valid. Re-enable this job once 0.1.1 is approved.
+  #
+  # chocolatey:
+  #   needs: test
+  #   runs-on: windows-latest
+  #   continue-on-error: true
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #       with:
+  #         ref: v${{ inputs.version }}
+  #     - name: Set version in nuspec
+  #       shell: pwsh
+  #       run: |
+  #         $version = "${{ inputs.version }}"
+  #         (Get-Content packaging/chocolatey/wst.nuspec) -replace '<version>.*</version>', "<version>$version</version>" | Set-Content packaging/chocolatey/wst.nuspec
+  #     - name: Pack and push
+  #       shell: pwsh
+  #       run: |
+  #         cd packaging/chocolatey
+  #         choco pack
+  #         choco push --source https://push.chocolatey.org/ --api-key ${{ secrets.CHOCOLATEY_API_KEY }} --verbose
