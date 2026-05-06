@@ -9,6 +9,7 @@ import {
   clearAllFilters,
 } from "../lib/store";
 import { DOC_TYPE_LABELS } from "../lib/types";
+import BackupPane from "./BackupPane";
 
 const STORAGE_KEY = "wst.sidebarWidth";
 const MIN_WIDTH = 160;
@@ -153,6 +154,8 @@ export default function Sidebar() {
           </For>
         </ul>
       </Show>
+
+      <BackupPane />
 
       <div class="sidebar-resize-handle" onMouseDown={onHandleMouseDown} />
     </nav>

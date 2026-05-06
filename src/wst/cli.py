@@ -440,23 +440,77 @@ def backup(ctx: click.Context) -> None:
 @backup.command("icloud")
 @command_format_option()
 @click.argument("identifier", required=False, default=None)
+@click.option("--all", "all_files", is_flag=True, help="Back up the whole library.")
+@click.option("--configure", is_flag=True, help="Confirm/save iCloud configuration.")
+@click.option("--subfolder", default=None, help="Subfolder name under iCloud Drive.")
 @click.pass_context
-def backup_icloud(ctx: click.Context, identifier: str | None) -> None:
+def backup_icloud(
+    ctx: click.Context,
+    identifier: str | None,
+    all_files: bool,
+    configure: bool,
+    subfolder: str | None,
+) -> None:
     """Backup files to iCloud Drive."""
-    from wst.backup import ICloudProvider, run_backup_file, run_backup_interactive
+    from wst.backup import (
+        ICloudProvider,
+        run_backup_all,
+        run_backup_file,
+        run_backup_interactive,
+    )
 
     config: WstConfig = ctx.obj["config"]
     fmt: str = ctx.obj.get("format", "human")
-    provider = ICloudProvider()
+    provider = ICloudProvider(subfolder=subfolder) if subfolder else ICloudProvider()
     db = Database(config.db_path)
 
+    if configure and (subfolder is not None or fmt != "human"):
+        # Non-interactive configure path — used by GUI inline wizard.
+        from wst.output import WstError, render_ok
+
+        if not provider.icloud_base or not provider.icloud_base.exists():
+            raise WstError(
+                "config_error",
+                "iCloud Drive is not available on this system.",
+                exit_code=2,
+            )
+        provider.dest_root = provider.icloud_base / (subfolder or "wst")
+        provider.dest_root.mkdir(parents=True, exist_ok=True)
+        result = {"provider": "icloud", "configured": True, "root": str(provider.dest_root)}
+        if fmt == "human":
+            click.echo(f"Configured: {provider.dest_root}")
+        else:
+            render_ok(result, fmt=fmt)
+        return
+
+    if configure:
+        provider.configure()
+        return
+
     try:
+        if all_files:
+            if not provider.is_configured():
+                from wst.output import WstError
+
+                raise WstError(
+                    "requires_interactive",
+                    "Backup provider is not configured.",
+                    details={"hint": "Try: wst backup icloud --format human"},
+                    exit_code=2,
+                )
+            result = run_backup_all(provider, config.library_path, emit=(fmt == "human"))
+            if fmt != "human":
+                from wst.output import render_ok
+
+                render_ok(result, fmt=fmt)
+            return
+
         if fmt != "human" and not identifier:
             from wst.output import WstError
 
             raise WstError(
                 "usage_error",
-                "Non-interactive backup requires an IDENTIFIER (ID or exact title).",
+                "Non-interactive backup requires an IDENTIFIER (ID or exact title) or --all.",
                 details={"hint": "Try: wst backup icloud 3 --format json"},
                 exit_code=2,
             )
@@ -485,15 +539,175 @@ def backup_icloud(ctx: click.Context, identifier: str | None) -> None:
         db.close()
 
 
+@backup.command("gdrive")
+@command_format_option()
+@click.argument("identifier", required=False, default=None)
+@click.option(
+    "--path",
+    "explicit_path",
+    type=click.Path(file_okay=False, dir_okay=True, path_type=Path),
+    default=None,
+    help="Explicit path to your Google Drive root (overrides auto-detection).",
+)
+@click.option("--configure", is_flag=True, help="Run interactive configuration")
+@click.option("--subfolder", default=None, help="Subfolder name under Google Drive.")
+@click.option("--all", "all_files", is_flag=True, help="Back up the whole library.")
+@click.pass_context
+def backup_gdrive(
+    ctx: click.Context,
+    identifier: str | None,
+    explicit_path: Path | None,
+    configure: bool,
+    subfolder: str | None,
+    all_files: bool,
+) -> None:
+    """Backup files to Google Drive (sync folder).
+
+    \b
+    Uses your local Google Drive for Desktop sync folder. On macOS, multiple
+    accounts result in multiple ~/Library/CloudStorage/GoogleDrive-* entries;
+    by default the first match is auto-picked. Pass --path to override.
+
+    \b
+    Examples:
+        wst backup gdrive --configure              # interactive setup
+        wst backup gdrive                           # interactive backup
+        wst backup gdrive 3                         # backup document by ID
+        wst backup gdrive --path "/Volumes/Drive"   # explicit Drive root
+    """
+    from wst.backup import (
+        GoogleDriveProvider,
+        run_backup_all,
+        run_backup_file,
+        run_backup_interactive,
+    )
+
+    config: WstConfig = ctx.obj["config"]
+    fmt: str = ctx.obj.get("format", "human")
+
+    if explicit_path or (configure and subfolder is not None):
+        provider = GoogleDriveProvider(
+            subfolder=subfolder or "wst",
+            root=explicit_path,
+        )
+    else:
+        provider = GoogleDriveProvider()
+
+    if configure and (explicit_path or subfolder is not None or fmt != "human"):
+        # Non-interactive configure path — used by GUI inline wizard.
+        from wst.config import save_gdrive_config
+        from wst.output import WstError, render_ok
+
+        if not provider.gdrive_base or not provider.gdrive_base.exists():
+            raise WstError(
+                "config_error",
+                "Google Drive sync folder not found. Pass --path to specify it explicitly.",
+                exit_code=2,
+            )
+        provider.dest_root = provider.gdrive_base / provider.subfolder
+        provider.dest_root.mkdir(parents=True, exist_ok=True)
+        save_gdrive_config(root=str(provider.gdrive_base), subfolder=provider.subfolder)
+        result = {"provider": "gdrive", "configured": True, "root": str(provider.dest_root)}
+        if fmt == "human":
+            click.echo(f"Configured: {provider.dest_root}")
+        else:
+            render_ok(result, fmt=fmt)
+        return
+
+    if configure:
+        provider.configure()
+        return
+
+    db = Database(config.db_path)
+    try:
+        if all_files:
+            if not provider.is_configured():
+                from wst.output import WstError
+
+                raise WstError(
+                    "requires_interactive",
+                    "Backup provider is not configured.",
+                    details={"hint": "Try: wst backup gdrive --configure --format human"},
+                    exit_code=2,
+                )
+            result = run_backup_all(provider, config.library_path, emit=(fmt == "human"))
+            if fmt != "human":
+                from wst.output import render_ok
+
+                render_ok(result, fmt=fmt)
+            return
+
+        if fmt != "human" and not identifier:
+            from wst.output import WstError
+
+            raise WstError(
+                "usage_error",
+                "Non-interactive backup requires an IDENTIFIER (ID or exact title) or --all.",
+                details={"hint": "Try: wst backup gdrive 3 --format json"},
+                exit_code=2,
+            )
+
+        if identifier:
+            if fmt == "human":
+                run_backup_file(provider, db, config.library_path, identifier, emit=True)
+                return
+            if not provider.is_configured():
+                from wst.output import WstError
+
+                raise WstError(
+                    "requires_interactive",
+                    "Backup provider is not configured. "
+                    "Run `wst backup gdrive --configure` in human mode first.",
+                    details={"hint": "Try: wst backup gdrive --configure --format human"},
+                    exit_code=2,
+                )
+            run_backup_file(provider, db, config.library_path, identifier, emit=False)
+            from wst.output import render_ok
+
+            render_ok({"provider": "gdrive", "identifier": identifier, "status": "ok"}, fmt=fmt)
+        else:
+            run_backup_interactive(provider, db, config.library_path)
+    finally:
+        db.close()
+
+
+@backup.command("providers")
+@command_format_option()
+@click.pass_context
+def backup_providers(ctx: click.Context) -> None:
+    """List available backup providers and their configured state."""
+    from wst.backup import PROVIDERS
+    from wst.output import render_ok
+
+    fmt: str = ctx.obj.get("format", "human")
+    rows = []
+    for name, cls in PROVIDERS.items():
+        try:
+            instance = cls()
+            configured = bool(instance.is_configured())
+        except Exception:
+            configured = False
+        rows.append({"name": name, "configured": configured})
+
+    if fmt == "human":
+        for row in rows:
+            mark = "✓" if row["configured"] else "✗"
+            click.echo(f"  {mark} {row['name']}")
+    else:
+        render_ok({"providers": rows}, fmt=fmt)
+
+
 @backup.command("s3")
 @command_format_option()
 @click.argument("identifier", required=False, default=None)
 @click.option("--configure", is_flag=True, help="Configure S3 credentials")
+@click.option("--all", "all_files", is_flag=True, help="Back up the whole library.")
 @click.pass_context
 def backup_s3(
     ctx: click.Context,
     identifier: str | None,
     configure: bool,
+    all_files: bool,
 ) -> None:
     """Backup files to S3 (or S3-compatible storage).
 
@@ -508,7 +722,12 @@ def backup_s3(
         wst backup s3 3                  # backup document by ID
         wst backup s3 "Cosmos"           # backup document by title
     """
-    from wst.backup import S3Provider, run_backup_file, run_backup_interactive
+    from wst.backup import (
+        S3Provider,
+        run_backup_all,
+        run_backup_file,
+        run_backup_interactive,
+    )
 
     config: WstConfig = ctx.obj["config"]
     fmt: str = ctx.obj.get("format", "human")
@@ -529,12 +748,29 @@ def backup_s3(
 
     db = Database(config.db_path)
     try:
+        if all_files:
+            if not provider.is_configured():
+                from wst.output import WstError
+
+                raise WstError(
+                    "requires_interactive",
+                    "Backup provider is not configured.",
+                    details={"hint": "Try: wst backup s3 --configure --format human"},
+                    exit_code=2,
+                )
+            result = run_backup_all(provider, config.library_path, emit=(fmt == "human"))
+            if fmt != "human":
+                from wst.output import render_ok
+
+                render_ok(result, fmt=fmt)
+            return
+
         if fmt != "human" and not identifier:
             from wst.output import WstError
 
             raise WstError(
                 "usage_error",
-                "Non-interactive backup requires an IDENTIFIER (ID or exact title).",
+                "Non-interactive backup requires an IDENTIFIER (ID or exact title) or --all.",
                 details={"hint": "Try: wst backup s3 3 --format json"},
                 exit_code=2,
             )

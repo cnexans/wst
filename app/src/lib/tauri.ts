@@ -75,10 +75,56 @@ export async function backupToIcloud(): Promise<string> {
   return invoke("backup_to_icloud");
 }
 
-export async function backupDocumentToIcloud(id: number): Promise<void> {
+export type BackupProvider = "icloud" | "gdrive" | "s3";
+
+export interface BackupProviderInfo {
+  name: BackupProvider;
+  configured: boolean;
+}
+
+export async function backupDocument(id: number, provider: BackupProvider): Promise<void> {
   await invoke<string>("run_wst_command", {
-    args: ["backup", "icloud", String(id), "--format", "json"],
+    args: ["backup", provider, String(id), "--format", "json"],
   });
+}
+
+/** @deprecated use backupDocument(id, "icloud") */
+export async function backupDocumentToIcloud(id: number): Promise<void> {
+  return backupDocument(id, "icloud");
+}
+
+export interface BackupAllResult {
+  provider: BackupProvider;
+  backed_up_files: number;
+}
+
+export async function backupAll(provider: BackupProvider): Promise<BackupAllResult> {
+  const raw = await invoke<string>("run_wst_command", {
+    args: ["backup", provider, "--all", "--format", "json"],
+  });
+  const result = JSON.parse(raw);
+  return result.data as BackupAllResult;
+}
+
+export async function listBackupProviders(): Promise<BackupProviderInfo[]> {
+  const raw = await invoke<string>("run_wst_command", {
+    args: ["backup", "providers", "--format", "json"],
+  });
+  const result = JSON.parse(raw);
+  return result.data.providers as BackupProviderInfo[];
+}
+
+export async function configureBackupProvider(
+  provider: "icloud" | "gdrive",
+  opts: { subfolder?: string; path?: string }
+): Promise<{ root: string }> {
+  const args = ["backup", provider, "--configure"];
+  if (opts.subfolder) args.push("--subfolder", opts.subfolder);
+  if (provider === "gdrive" && opts.path) args.push("--path", opts.path);
+  args.push("--format", "json");
+  const raw = await invoke<string>("run_wst_command", { args });
+  const result = JSON.parse(raw);
+  return { root: result.data.root };
 }
 
 export interface ExtraInfo {

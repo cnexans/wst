@@ -25,7 +25,7 @@ Named after **Wan Shi Tong**, the ancient spirit who collected every piece of kn
 - **SQLite search index**: Full-text search across title, author, tags, subject, and summary via FTS5
 - **Coverage stats**: See metadata completeness across your library, broken down by document type and field
 - **Interactive browser**: Fuzzy-search your library, view and edit metadata interactively
-- **Cloud backup**: Backup files to iCloud Drive or S3, with extensible provider system
+- **Cloud backup**: Backup files to iCloud Drive, Google Drive, or S3, with extensible provider system
 - **Extensible backends**: Abstract layers for AI (Claude CLI, future API/SDK) and storage (local filesystem, S3)
 
 ## Installation
@@ -127,7 +127,10 @@ wst browse
 
 # Backup
 wst backup icloud
+wst backup gdrive          # syncs into your local Google Drive folder
+wst backup gdrive --all    # back up the entire library (used by the GUI)
 wst backup s3
+wst backup providers --format json  # list providers and configured state
 ```
 
 ## Commands
@@ -143,7 +146,7 @@ wst backup s3
 | `wst stats` | Show metadata coverage statistics. Options: `--type` |
 | `wst browse` | Interactive TUI for browsing and editing documents |
 | `wst ocr <id-or-path>` | Run OCR on scanned PDFs |
-| `wst backup [provider]` | Backup files to iCloud or S3 |
+| `wst backup [provider]` | Backup files to iCloud, Google Drive, or S3. Providers: `icloud`, `gdrive`, `s3`. Use `--all` for full-library backup. The GUI exposes the same providers via the **Backup pane** in the sidebar. |
 
 ## How Ingestion Works
 

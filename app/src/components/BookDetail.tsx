@@ -1,8 +1,23 @@
 import { Show, For, createSignal, createEffect } from "solid-js";
 import { selectedDoc, setSelectedDoc, setDocuments, documents } from "../lib/store";
-import { openPdf, revealInFinder, getCover, editDocument, getTopicsVocabulary, backupDocumentToIcloud } from "../lib/tauri";
+import {
+  openPdf,
+  revealInFinder,
+  getCover,
+  editDocument,
+  getTopicsVocabulary,
+  backupDocument,
+  listBackupProviders,
+  type BackupProvider,
+} from "../lib/tauri";
 import { DOC_TYPE_LABELS } from "../lib/types";
 import type { Document } from "../lib/types";
+
+const PROVIDER_LABELS: Record<BackupProvider, string> = {
+  icloud: "iCloud",
+  gdrive: "Google Drive",
+  s3: "S3",
+};
 
 export default function BookDetail() {
   const doc = () => selectedDoc();
@@ -12,6 +27,8 @@ export default function BookDetail() {
   const [saveError, setSaveError] = createSignal<string | null>(null);
   const [backupStatus, setBackupStatus] = createSignal<string | null>(null);
   const [backupError, setBackupError] = createSignal(false);
+  const [backupMenuOpen, setBackupMenuOpen] = createSignal(false);
+  const [configuredProviders, setConfiguredProviders] = createSignal<BackupProvider[]>([]);
 
   // Edit form fields
   const [editTitle, setEditTitle] = createSignal("");
@@ -92,11 +109,22 @@ export default function BookDetail() {
     }
   };
 
-  const handleBackup = async (id: number) => {
+  const openBackupMenu = async () => {
     try {
-      await backupDocumentToIcloud(id);
+      const list = await listBackupProviders();
+      setConfiguredProviders(list.filter((p) => p.configured).map((p) => p.name));
+    } catch {
+      setConfiguredProviders([]);
+    }
+    setBackupMenuOpen(true);
+  };
+
+  const handleBackup = async (id: number, provider: BackupProvider) => {
+    setBackupMenuOpen(false);
+    try {
+      await backupDocument(id, provider);
       setBackupError(false);
-      setBackupStatus("Guardado en iCloud ✓");
+      setBackupStatus(`Guardado en ${PROVIDER_LABELS[provider]} ✓`);
     } catch (err) {
       setBackupError(true);
       setBackupStatus(String(err));
@@ -152,13 +180,37 @@ export default function BookDetail() {
                   >
                     Mostrar en Finder
                   </button>
-                  <button
-                    class="btn btn-secondary"
-                    onClick={() => handleBackup(d().id)}
-                    title="Backup a iCloud"
-                  >
-                    ☁ iCloud
-                  </button>
+                  <div class="backup-menu">
+                    <button
+                      class="btn btn-secondary"
+                      onClick={openBackupMenu}
+                      title="Backup a la nube"
+                    >
+                      ☁ Backup ▾
+                    </button>
+                    <Show when={backupMenuOpen()}>
+                      <div
+                        class="backup-menu-dropdown"
+                        onMouseLeave={() => setBackupMenuOpen(false)}
+                      >
+                        <For each={Object.entries(PROVIDER_LABELS) as [BackupProvider, string][]}>
+                          {([key, label]) => {
+                            const isConfigured = configuredProviders().includes(key);
+                            return (
+                              <button
+                                class="backup-menu-item"
+                                disabled={!isConfigured}
+                                title={isConfigured ? "" : "Run `wst backup " + key + " --configure` to enable"}
+                                onClick={() => handleBackup(d().id, key)}
+                              >
+                                {label}{isConfigured ? "" : " (not configured)"}
+                              </button>
+                            );
+                          }}
+                        </For>
+                      </div>
+                    </Show>
+                  </div>
                   <button
                     class="btn btn-secondary"
                     onClick={openEditPanel}
