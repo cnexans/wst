@@ -140,6 +140,7 @@ wst backup s3
 | `wst browse` | Interactive TUI for browsing and editing documents |
 | `wst ocr <id-or-path>` | Run OCR on scanned PDFs |
 | `wst backup [provider]` | Backup files to iCloud or S3 |
+| `wst topics build` | Cluster the corpus into a topic vocabulary and assign topics to every document |
 
 ## How Ingestion Works
 
@@ -154,6 +155,20 @@ PDF file → [OCR (optional)] → Extract text + PDF metadata → AI generates m
 5. **Indexing**: Metadata is stored in SQLite with full-text search (FTS5).
 
 After ingestion, use `wst fix` to batch-enrich documents that are missing fields (ISBN, table of contents, etc.) — this is especially useful for scanned books where the initial AI pass may not have found all metadata.
+
+## Topics
+
+`wst topics build` clusters every document into a topic vocabulary using sentence embeddings and KMeans, then names each cluster with the AI backend.
+
+To get useful clusters out of short titles and books that share generic title patterns, ingest computes a `content_preview` for every document via a deterministic ladder, picking the first source that yields enough text:
+
+1. **Summary** — the AI-generated summary, when ≥600 characters.
+2. **TOC** — `fitz.Document.get_toc()` flattened to one heading per line.
+3. **Introductory chapter** — text from the first non-front-matter TOC entry's page range. Falls back to a regex match (`introducción|introduction|prefacio|prólogo|preface|capítulo 1|chapter 1`) when the TOC has no usable page indices.
+4. **First ~5 pages** — last-resort body text.
+5. **Title + tags** — only when the document has no extractable text.
+
+The chosen text is truncated to 1500 characters and persisted in `documents.content_preview`. The ladder step picked is recorded in `documents.content_preview_source` for debugging. Existing rows are backfilled lazily on the next `wst topics build`.
 
 ## Library Structure
 

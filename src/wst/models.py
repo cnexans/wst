@@ -32,6 +32,8 @@ class DocumentMetadata(BaseModel):
     summary: str | None = None
     table_of_contents: str | None = None
     subject: str | None = None
+    content_preview: str | None = None
+    content_preview_source: str | None = None
 
 
 class LibraryEntry(BaseModel):

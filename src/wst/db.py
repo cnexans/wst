@@ -21,6 +21,8 @@ CREATE TABLE IF NOT EXISTS documents (
     summary           TEXT,
     toc               TEXT,
     subject           TEXT,
+    content_preview         TEXT,
+    content_preview_source  TEXT,
     filename          TEXT NOT NULL,
     original_filename TEXT NOT NULL,
     file_path         TEXT NOT NULL UNIQUE,
@@ -112,6 +114,14 @@ class Database:
             self.conn.execute("ALTER TABLE documents ADD COLUMN topics TEXT")
             self.conn.commit()
 
+        # RFC 0011 — content preview for topic modeling
+        if not _has_column(self.conn, "documents", "content_preview"):
+            self.conn.execute("ALTER TABLE documents ADD COLUMN content_preview TEXT")
+            self.conn.commit()
+        if not _has_column(self.conn, "documents", "content_preview_source"):
+            self.conn.execute("ALTER TABLE documents ADD COLUMN content_preview_source TEXT")
+            self.conn.commit()
+
         # Ensure FTS table has topics column; rebuild if missing
         if not _has_fts_column(self.conn, "topics"):
             self._rebuild_fts()
@@ -189,8 +199,9 @@ class Database:
             """INSERT INTO documents
                (title, author, doc_type, year, publisher, isbn, language,
                 tags, topics, page_count, summary, toc, subject,
+                content_preview, content_preview_source,
                 filename, original_filename, file_path, file_hash, ingested_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 m.title,
                 m.author,
@@ -205,6 +216,8 @@ class Database:
                 m.summary,
                 m.table_of_contents,
                 m.subject,
+                m.content_preview,
+                m.content_preview_source,
                 entry.filename,
                 entry.original_filename,
                 entry.file_path,
@@ -295,6 +308,7 @@ class Database:
             """UPDATE documents SET
                title=?, author=?, doc_type=?, year=?, publisher=?, isbn=?,
                language=?, tags=?, topics=?, page_count=?, summary=?, toc=?, subject=?,
+               content_preview=?, content_preview_source=?,
                filename=?, file_path=?
                WHERE id=?""",
             (
@@ -311,6 +325,8 @@ class Database:
                 m.summary,
                 m.table_of_contents,
                 m.subject,
+                m.content_preview,
+                m.content_preview_source,
                 entry.filename,
                 entry.file_path,
                 entry.id,
@@ -408,6 +424,15 @@ class Database:
             topics = json.loads(row["topics"]) if row["topics"] else []
         except (IndexError, KeyError):
             topics = []
+        # content_preview columns may not exist in very old DB rows
+        try:
+            content_preview = row["content_preview"]
+        except (IndexError, KeyError):
+            content_preview = None
+        try:
+            content_preview_source = row["content_preview_source"]
+        except (IndexError, KeyError):
+            content_preview_source = None
         meta = DocumentMetadata(
             title=row["title"],
             author=row["author"],
@@ -422,6 +447,8 @@ class Database:
             summary=row["summary"],
             table_of_contents=row["toc"],
             subject=row["subject"],
+            content_preview=content_preview,
+            content_preview_source=content_preview_source,
         )
         return LibraryEntry(
             id=row["id"],

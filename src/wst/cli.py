@@ -1814,7 +1814,13 @@ def topics_build(ctx: click.Context, n_topics: int | None, yes: bool) -> None:
     db = Database(config.db_path)
 
     try:
-        from wst.topics import assign_topics, backfill_subjects, build_vocabulary, save_vocabulary
+        from wst.topics import (
+            assign_topics,
+            backfill_content_previews,
+            backfill_subjects,
+            build_vocabulary,
+            save_vocabulary,
+        )
 
         # Check for existing vocabulary
         existing = db.load_topics_vocabulary()
@@ -1835,6 +1841,16 @@ def topics_build(ctx: click.Context, n_topics: int | None, yes: bool) -> None:
                 return
 
         ai = get_ai_backend(config.ai_backend, config.ai_model)
+
+        # RFC 0011 — lazy backfill of content_preview for rows added before the
+        # ladder existed. Runs once after upgrade; idempotent on subsequent calls.
+        def _emit_backfill_progress(current: int, total: int) -> None:
+            click.echo(f"\r          Backfilling content previews {current}/{total}...", nl=False)
+
+        on_progress = _emit_backfill_progress if fmt == "human" else None
+        backfilled = backfill_content_previews(db, config.library_path, on_progress=on_progress)
+        if fmt == "human" and backfilled:
+            click.echo(f"\r          Backfilled content previews for {backfilled} documents.   ")
 
         if fmt == "human":
             click.echo("Step 1/4  Embedding documents and clustering...")

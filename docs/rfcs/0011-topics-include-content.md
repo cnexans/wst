@@ -1,7 +1,7 @@
 # RFC 0011: Topic modeling should include document content
 
 **Issue**: #29
-**Status**: Approved — awaiting approval label
+**Status**: Implementing
 **Branch**: `rfc/29-topic-modeling-content`
 
 **Resolutions** (from #29 comments):
