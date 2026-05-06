@@ -9,7 +9,7 @@ import click
 
 from wst.ai import AIBackend
 from wst.db import Database
-from wst.document import extract_doc_info, is_supported, write_doc_metadata
+from wst.document import build_content_preview, extract_doc_info, is_supported, write_doc_metadata
 from wst.models import LibraryEntry
 from wst.storage import StorageBackend, build_dest_path
 from wst.topics import assign_topics_single, load_vocabulary
@@ -157,6 +157,20 @@ def ingest_file(
         return IngestResult(path.name, "failed", f"Error generating metadata: {e}", notes=notes)
 
     metadata.page_count = page_count
+
+    # RFC 0011 — compute content_preview while the file is still on disk
+    try:
+        preview, source = build_content_preview(
+            path,
+            metadata.summary,
+            title=metadata.title,
+            tags=metadata.tags,
+        )
+        metadata.content_preview = preview
+        metadata.content_preview_source = source
+    except Exception as e:
+        if verbose:
+            click.echo(f"  Warning: could not build content_preview: {e}")
 
     # If a KMeans vocabulary exists, override the LLM-chosen topics with
     # vocabulary-constrained ones so ingested docs stay aligned with the corpus.

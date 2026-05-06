@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
+from pathlib import Path
 
 from wst.ai import AIBackend
 from wst.db import Database
@@ -186,7 +188,11 @@ def build_vocabulary(
         parts = [m.title]
         if m.tags:
             parts.append(", ".join(m.tags))
-        if m.summary:
+        # Prefer the precomputed content preview (RFC 0011); fall back to the
+        # 300-char summary for rows that haven't been backfilled yet.
+        if m.content_preview:
+            parts.append(m.content_preview[:1500])
+        elif m.summary:
             parts.append(m.summary[:300])
         texts.append(" | ".join(parts))
         doc_metas.append(
@@ -195,6 +201,7 @@ def build_vocabulary(
                 "title": m.title,
                 "tags": m.tags,
                 "summary": (m.summary or "")[:200],
+                "content_preview": (m.content_preview or "")[:600],
             }
         )
 
@@ -310,6 +317,54 @@ def _build_subject_mapping(
         for t in topic_names:
             subject_map[t] = subject_name
     return subject_map
+
+
+def backfill_content_previews(
+    db: Database,
+    library_path: Path,
+    on_progress: Callable[[int, int], None] | None = None,
+) -> int:
+    """Populate ``content_preview`` for rows where it is NULL.
+
+    Resolves each row's stored relative ``file_path`` against ``library_path``.
+    Skips rows whose file no longer exists (Q3 — out of scope).
+
+    Returns the number of rows updated.
+    """
+    from wst.document import build_content_preview
+
+    rows = db.conn.execute(
+        "SELECT id, file_path, summary, title, tags FROM documents WHERE content_preview IS NULL"
+    ).fetchall()
+
+    total = len(rows)
+    if total == 0:
+        return 0
+
+    updated = 0
+    for i, row in enumerate(rows, start=1):
+        if on_progress is not None:
+            on_progress(i, total)
+        path = library_path / row["file_path"]
+        if not path.exists():
+            continue
+        try:
+            tags = json.loads(row["tags"]) if row["tags"] else []
+        except (json.JSONDecodeError, TypeError):
+            tags = []
+        try:
+            preview, source = build_content_preview(
+                path, row["summary"], title=row["title"], tags=tags
+            )
+        except Exception:
+            continue
+        db.conn.execute(
+            "UPDATE documents SET content_preview = ?, content_preview_source = ? WHERE id = ?",
+            (preview, source, row["id"]),
+        )
+        updated += 1
+    db.conn.commit()
+    return updated
 
 
 def backfill_subjects(db: Database, topic_to_subject: dict[str, str]) -> int:
