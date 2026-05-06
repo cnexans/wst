@@ -1,7 +1,7 @@
 # RFC 0010: Auto-release bug fixes (skip-ci leak + squash-bullet parser)
 
 **Issue**: #27
-**Status**: Approved — awaiting implementation
+**Status**: Implementing
 **Branch**: `rfc/27-skip-ci-and-squash-parser`
 
 **Resolutions** (from #27 comments):
