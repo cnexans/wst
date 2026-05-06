@@ -1,8 +1,12 @@
 # RFC 0010: Auto-release bug fixes (skip-ci leak + squash-bullet parser)
 
 **Issue**: #27
-**Status**: Draft — awaiting approval
+**Status**: Approved — awaiting implementation
 **Branch**: `rfc/27-skip-ci-and-squash-parser`
+
+**Resolutions** (from #27 comments):
+- **Q1**: Drop `[skip ci]` entirely; rely on the actor+message guard.
+- **Q2**: Manually push `v0.11.0` at `ad48d8c` to ship #26's intended smoke-test release.
 
 ---
 
@@ -80,18 +84,10 @@ Add a one-paragraph note to the `Releasing` section of `README.md`: *"Don't incl
 
 ---
 
-## Open Questions
-
-> **Q1**: Drop `[skip ci]` from the bump commit message entirely (relying on the actor+message guard alone), or keep it as belt-and-suspenders and just be careful in prose? My recommendation is **drop it** — fewer footguns, and the actor guard is mechanically reliable.
-
-> **Q2**: Should this RFC also push a manual `v0.11.0` tag at `ad48d8c` to ship the artifacts that #26's smoke test was supposed to produce? Or wait for the next real `feat:`/`fix:` merge (after these fixes ship) to be the smoke test? Pushing `v0.11.0` now ships v0.11.0 with the new bump-and-release pipeline live — that's the cleanest validation. Waiting means v0.11.0 is whatever the next merge bumps to, which loses the symmetry of "the PR that introduced auto-release is the one that produced v0.11.0."
-
----
-
 ## Implementation Plan
 
 - [ ] Add `sed 's/^[[:space:]]*\* //'` strip to the `Determine bump kind from commits` step in `auto-release.yml`.
-- [ ] Remove `[skip ci]` from the bump commit message (depends on Q1).
+- [ ] Remove `[skip ci]` from the bump commit message; keep the `github-actions[bot]` actor + `chore: bump version to` subject guard as the sole recursion check.
 - [ ] Update `README.md`'s Releasing section with the no-`[skip ci]`-in-prose note.
-- [ ] (Depends on Q2) Manually push `v0.11.0` at `ad48d8c` to ship #26's intended smoke-test release.
+- [ ] After the fixes merge, manually push `v0.11.0` at `ad48d8c` (or the merge commit of this PR if a fresh tag is cleaner) to validate the end-to-end bump-and-release pipeline by shipping #26's intended smoke-test release.
 - [ ] Smoke-test by including a tiny `fix:` commit alongside the parser fix in this PR's merge — once `auto-release.yml` is patched, the merge of *this* PR should auto-bump (patch).
